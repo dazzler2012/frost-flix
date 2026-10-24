@@ -117,8 +117,6 @@ import kotlin.math.sqrt
 enum class Screen { Home, Settings }
 
 const val DOCK_COLUMNS = 6
-/** Index of the "Manage from phone" category in the settings list. */
-const val PHONE_CATEGORY = 8
 /** Index of the "Catalogs" category in the settings list. */
 const val CATALOGS_CATEGORY = 4
 /** Pseudo package used by move mode for the Apps folder tile. */
@@ -245,7 +243,6 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         val c = app.requestSettings.intValue
         if (c >= 0) { settingsCat = c; onScreen(Screen.Settings); app.requestSettings.intValue = -1 }
     }
-    LaunchedEffect(app.requestFolder.value) { if (app.requestFolder.value) { folderOpen = true; app.requestFolder.value = false } }
 
     LaunchedEffect(screen) {
         if (screen == Screen.Home) { delay(400); runCatching { firstTile.requestFocus() } }
@@ -351,12 +348,10 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
                     },
                 )
             }
-            if (screen == Screen.Home && !folderOpen) UpdateBanner(app, s, Modifier.align(Alignment.TopCenter))
             if (screen == Screen.Settings) SettingsScreen(app, settingsCat) { settingsCat = 0; onScreen(Screen.Home) }
             pickerFor?.let { e ->
                 IconPicker(
                     app, e,
-                    onPhone = { settingsCat = PHONE_CATEGORY; onScreen(Screen.Settings) },
                     onClose = {
                         val back = tileFocus[e.pkg] ?: firstTile
                         pickerFor = null
@@ -425,7 +420,7 @@ private fun PlayGlyph(modifier: Modifier, color: Color) {
  * Half-size copy of a baked page picture, for the clear glass: sharp (2x, not 4x, enlargement like the old
  * 480 px copy) and lined up exactly with the page, at a quarter of the texture reading a full-size copy costs.
  */
-/** Test switch (adb extra page_glass): clear glass from the page picture, or from the small GlassCache copy. */
+/** Test switch: clear glass from the page picture, or from the small GlassCache copy. */
 object PageGlass { val on = mutableStateOf(true) }
 
 private object GlassHalf {
@@ -504,46 +499,15 @@ private fun HeroSection(
     val settings = app.settings
     val ctx = LocalContext.current
     val catalogItems by app.catalogs.items.collectAsState()
-    val cwItems by app.cw.items.collectAsState()
     val enrichedRaw by app.catalogs.enrichedItems.collectAsState()
     val status by app.catalogs.status.collectAsState()
     var index by remember { mutableIntStateOf(0) }
     var focused by remember { mutableStateOf(false) }
-    val mode = settings.continueMode
-    val lead = settings.cwLead
-    val items = remember(catalogItems, cwItems, mode, lead) {
-        val cw = if (mode == "off") emptyList() else cwItems
-        val keys = cw.map { it.key }.toSet()
-        val rest = catalogItems.filterNot { it.key in keys }
-        when {
-            cw.isEmpty() -> catalogItems
-            else -> buildList {
-                // "At the start": the first [lead] titles open the carousel, the others follow one after
-                // every four catalog titles. "Mixed": all of them spread that way.
-                val head = if (mode == "mixed") 0 else if (lead <= 0) cw.size else lead.coerceAtMost(cw.size)
-                addAll(cw.take(head))
-                var c = head
-                rest.forEachIndexed { i, it -> if (i % 4 == 3 && c < cw.size) add(cw[c++]); add(it) }
-                while (c < cw.size) add(cw[c++])
-            }
-        }
-    }
-    // TMDB enrichment is cached per title; keep the progress of Continue Watching items on top of it.
+    val items = catalogItems
     val enriched = enrichedRaw
-    // Back from Nuvio: open the carousel on what was just watched.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     val lifeState by lifecycle.currentStateFlow.collectAsState()
     val resumed = lifeState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
-    val jumpRev by app.cw.jumpRev.collectAsState()
-    var jumpedRev by remember { mutableIntStateOf(jumpRev) }
-    LaunchedEffect(resumed, jumpRev, items) {
-        if (resumed && jumpRev != jumpedRev && settings.continueJump && mode != "off") {
-            val k = app.cw.lastWatched.value
-            val i = items.indexOfFirst { it.key == k }
-            if (i >= 0) index = i
-            jumpedRev = jumpRev
-        }
-    }
 
     val raw = if (items.isEmpty()) null else items[index.mod(items.size)]
     val target = raw?.let { r -> enriched[r.key]?.copy(progress = r.progress, sub = r.sub) ?: r }
@@ -628,32 +592,7 @@ private fun HeroSection(
             if (n.logo.isNotBlank()) loader.enqueue(imgReq(ctx, n.logo, 1000, 400))
         }
     }
-    // Continue Watching stays in memory (picture, logo, glass) for as long as the title is in the list:
-    // going back to it — even after browsing far, or with Home — never reloads anything.
-    val cwKeys = remember(cwItems) { cwItems.map { it.key } }
-    LaunchedEffect(cwKeys) { cwItems.forEach { app.catalogs.enrich(it) } }
-    val cwShown = cwItems.map { c -> (enriched[c.key] ?: c).let { withArtwork(it, settings.artChoice, settings.artPick(it.key)) } }
-    LaunchedEffect(cwShown.map { it.background + it.logo }, settings.imageQuality, settings.blurRadius) {
-        val loader = SingletonImageLoader.get(ctx)
-        val high = settings.imageQuality == "high"
-        val keep = mutableSetOf<String>()
-        for (c in cwShown) {
-            val bg = c.background
-            if (bg.isNotBlank()) {
-                keep += bg
-                if (GlassCache.pinnedFull[bg] == null) (loader.execute(imgReq(ctx, if (high) sized(bg, "w1280") else bg)) as? SuccessResult)
-                    ?.image?.toBitmap()?.asImageBitmap()?.let { GlassCache.pinnedFull[bg] = it }
-                GlassCache.pin(ctx, bg, settings.blurRadius)
-            }
-            if (c.logo.isNotBlank()) {
-                keep += c.logo
-                if (GlassCache.pinnedLogo[c.logo] == null) (loader.execute(imgReq(ctx, c.logo, 1000, 400)) as? SuccessResult)
-                    ?.image?.toBitmap()?.asImageBitmap()?.let { GlassCache.pinnedLogo[c.logo] = it }
-            }
-        }
-        GlassCache.keepOnly(keep)
-    }
-    // Home pressed while on the home screen: back to the first slide (Continue Watching).
+    // Home pressed while on the home screen: back to the first slide.
     val homeRev = app.homeRev.intValue
     var seenHome by remember { mutableIntStateOf(homeRev) }
     LaunchedEffect(homeRev) {
@@ -802,19 +741,6 @@ private fun HeroInfo(
                         if (it.rating.isNotBlank()) Chip("★ ${it.rating}", s * m)
                         if (it.year.isNotBlank()) Chip(it.year, s * m)
                         if (it.platform.isNotBlank()) Chip(it.platform, s * m)
-                    }
-                }
-                if (it.progress >= 0f && settings.cwProgress) {
-                    Spacer(Modifier.height((10 * s).dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            listOfNotNull("Continue", it.sub.takeIf { x -> x.isNotBlank() }, "${(it.progress * 100).toInt()}%").joinToString("  ·  "),
-                            color = Color.White, fontSize = (10.5f * s * m).sp, fontWeight = FontWeight.Medium,
-                        )
-                        Spacer(Modifier.width((8 * s).dp))
-                        Box(Modifier.width((90 * s).dp).height((3 * s).dp).clipR((2 * s).dp).background(Color.White.copy(alpha = 0.25f))) {
-                            Box(Modifier.fillMaxWidth(it.progress.coerceIn(0f, 1f)).height((3 * s).dp).background(Color.White))
-                        }
                     }
                 }
                 if (settings.showGenres) {
@@ -992,47 +918,12 @@ private fun TopBar(app: GlassApp, s: Float, onSettings: () -> Unit, modifier: Mo
                     if (settings.showDate) Text(date, color = Color.White.copy(alpha = 0.75f), fontSize = (8 * s).sp,
                         fontWeight = FontWeight.SemiBold, letterSpacing = (0.6f * s).sp, style = shade)
                 }
-                UpdateDot(app, s)
                 GearButton(s, onSettings) { barFocused = it }
             }
             weatherRow()
         } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((10 * s).dp)) {
             weatherRow()
-            UpdateDot(app, s)
             GearButton(s, onSettings) { barFocused = it }
-        }
-    }
-}
-
-/** A small pill when a new version is on GitHub (details and install in Settings → About). */
-@Composable
-private fun UpdateDot(app: GlassApp, s: Float) {
-    val r by app.updater.available.collectAsState()
-    val rel = r ?: return
-    Text(
-        "Update ${rel.version}", color = Color.Black, fontSize = (8.5f * s).sp, fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.92f))
-            .padding(horizontal = (7 * s).dp, vertical = (2 * s).dp),
-    )
-}
-
-/** One-time card when an update is found: tvOS-style banner, top centre, for a few seconds. */
-@Composable
-fun UpdateBanner(app: GlassApp, s: Float, modifier: Modifier) {
-    val r by app.updater.available.collectAsState()
-    var shownFor by remember { mutableStateOf("") }
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(r?.version) {
-        val v = r?.version ?: return@LaunchedEffect
-        if (v == shownFor) return@LaunchedEffect
-        shownFor = v; visible = true; delay(9000); visible = false
-    }
-    AnimatedVisibility(visible, modifier, enter = fadeIn(tween(300)), exit = fadeOut(tween(400))) {
-        GlassPanel(Modifier.padding(top = (16 * s).dp), (16 * s).dp, style = app.settings.panelStyle, darken = 0.55f) {
-            Column(Modifier.padding(horizontal = (16 * s).dp, vertical = (10 * s).dp)) {
-                Text("Glassio ${r?.version} is available", color = Color.White, fontSize = (12 * s).sp, fontWeight = FontWeight.SemiBold)
-                Text("Settings → About → Install update", color = AppleSecondary, fontSize = (10 * s).sp, fontWeight = FontWeight.Medium)
-            }
         }
     }
 }

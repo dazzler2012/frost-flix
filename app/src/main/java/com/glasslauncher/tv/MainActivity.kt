@@ -28,7 +28,6 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         hideBars()
         val app = application as GlassApp
-        handleExtras(intent)
         setContent {
             // A launcher never exits on Back; it just returns to its home view.
             BackHandler(enabled = true) { screen = Screen.Home }
@@ -58,41 +57,10 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         lastInput = System.currentTimeMillis()
         hideBars()
-        (application as GlassApp).cw.pollNow()
-    }
-
-    /** Terminal helper: am start -n com.glasslauncher.tv/.MainActivity --es icon_pack <package> ("none" clears it). */
-    private fun handleExtras(i: Intent?) {
-        val app = application as GlassApp
-        i?.getStringExtra("reset_icon")?.let { app.icons.reset(it) }
-        if (i?.getBooleanExtra("open_folder", false) == true) app.requestFolder.value = true
-        if (i?.hasExtra("hero_autoplay") == true) app.settings.heroAutoplay = i.getBooleanExtra("hero_autoplay", true)
-        if (i?.hasExtra("page_glass") == true) com.glasslauncher.tv.ui.PageGlass.on.value = i.getBooleanExtra("page_glass", true)
-        i?.getIntExtra("open_settings", -1)?.takeIf { it >= 0 }?.let { app.requestSettings.intValue = it; app.requestSettingsRev.intValue++ }
-        if (i?.hasExtra("focus_color") == true) app.settings.focusColor = i.getBooleanExtra("focus_color", false)
-        i?.getStringExtra("ha_webhook")?.let { app.settings.haWebhook = it; app.settings.haOnLaunch = it.startsWith("http") }
-        i?.getStringExtra("saver_mode")?.let { if (it in setOf("aerial", "slideshow", "system")) app.settings.saverMode = it }
-        i?.getStringExtra("continue_mode")?.let { if (it in setOf("off", "first", "mixed")) app.settings.continueMode = it }
-        if (i?.getBooleanExtra("start_saver", false) == true)
-            startActivity(android.content.Intent(this, com.glasslauncher.tv.saver.ScreensaverActivity::class.java))
-        if (i?.getBooleanExtra("dump_settings", false) == true) app.settings.run {
-            android.util.Log.i("GlassSettings", "dockStyle=$dockStyle tileStyle=$tileStyle panelStyle=$panelStyle iconPack=$iconPack blur=$blurRadius refraction=$refraction dockScale=$dockScale saverMode=$saverMode backSaver=$backSaver continueMode=$continueMode cwLead=$cwLead cw=${(application as GlassApp).cw.entries.value.size} cwAccess=${(application as GlassApp).cw.hasLogAccess()}")
-        }
-        i?.getStringExtra("perf_mode")?.let { if (it in setOf("auto", "performance", "balanced", "quality")) app.settings.applyMode(it) }
-        i?.getIntExtra("refraction", -1)?.takeIf { it >= 0 }?.let { app.settings.refraction = it; app.settings.perfMode = "custom" }
-        i?.getStringExtra("art_choice")?.let { if (it in setOf("main", "second", "best", "addon")) app.settings.artChoice = it }
-        i?.getIntExtra("blur", -1)?.takeIf { it >= 0 }?.let { app.settings.blurRadius = it }
-        i?.getStringExtra("dock_style")?.let { if (it in setOf("liquid", "clear", "amoled", "bow", "water", "water_still")) app.settings.dockStyle = it }
-        i?.getStringExtra("tile_style")?.let { if (it in setOf("liquid", "clear", "amoled", "bow", "water", "water_still")) app.settings.tileStyle = it }
-        i?.getStringExtra("icon_pack")?.let { p ->
-            if (p == "none") app.settings.iconPack = ""
-            else if (app.packs.installed().any { it.pkg == p }) app.settings.iconPack = p
-        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handleExtras(intent)
         // Home pressed while we are already in front: go back to the plain home view.
         if (intent.hasCategory(Intent.CATEGORY_HOME)) {
             screen = Screen.Home

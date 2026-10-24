@@ -15,7 +15,7 @@ import java.net.URL
  */
 class IconStore(private val ctx: Context) {
     private val dir = File(ctx.filesDir, "icons").apply { mkdirs() }
-    /** Folder a user can fill over USB/ADB/file manager: <pkg>.png|jpg|webp */
+    /** Folder a user can fill over USB or a file manager: <pkg>.png|jpg|webp */
     val dropFolder: File get() = (ctx.getExternalFilesDir("icons") ?: File(ctx.filesDir, "drop")).apply { mkdirs() }
     val rev = mutableIntStateOf(0)
 

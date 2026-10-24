@@ -5,3 +5,8 @@ local.properties
 *.apk
 .DS_Store
 releases/
+
+# Signing material and local secrets: never commit these.
+*.jks
+*.keystore
+keystore.properties

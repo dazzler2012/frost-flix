@@ -68,30 +68,6 @@ class ScreensaverActivity : ComponentActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         val app = application as GlassApp
-        if (app.settings.saverMode == "system") {
-            // Hand over to the TV's own screensaver (e.g. Aerial Views): the posters play for the few seconds
-            // until the system starts it, then this screen steps aside. If the local shell is not allowed,
-            // the posters simply stay.
-            setContent { Box(Modifier.fillMaxSize().background(Color.Black)) }
-            Thread {
-                val now = SystemDream.startNow(applicationContext)
-                runOnUiThread {
-                    if (now.isSuccess) { finish(); overridePendingTransition(0, 0); return@runOnUiThread }
-                    // Fallback: let the system start it after its shortest timeout, posters meanwhile.
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    setContent { com.glasslauncher.tv.ui.GlassType { SaverContent(app, forceSlideshow = true) } }
-                    Thread {
-                        if (SystemDream.arm(applicationContext).isSuccess)
-                            SystemDream.awaitAndRestore(applicationContext) { runOnUiThread { if (!isFinishing) finish() } }
-                        else runOnUiThread {
-                            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                            android.widget.Toast.makeText(this, "Allow USB debugging for Glassio to use the TV screensaver", android.widget.Toast.LENGTH_LONG).show()
-                        }
-                    }.apply { isDaemon = true }.start()
-                }
-            }.apply { isDaemon = true }.start()
-            return
-        }
         setContent { com.glasslauncher.tv.ui.GlassType { SaverContent(app) } }
     }
 

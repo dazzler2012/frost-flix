@@ -50,16 +50,4 @@ class Http(ctx: Context) {
             return JSONArray(c.inputStream.bufferedReader().use { it.readText() })
         } finally { c.disconnect() }
     }
-
-    /** Fire-and-forget JSON POST (used for the Home Assistant webhook). */
-    fun post(url: String, body: JSONObject): Int {
-        val c = URL(url).openConnection() as HttpURLConnection
-        c.connectTimeout = 4000; c.readTimeout = 6000
-        c.requestMethod = "POST"; c.doOutput = true
-        c.setRequestProperty("Content-Type", "application/json")
-        try {
-            c.outputStream.use { it.write(body.toString().toByteArray()) }
-            return c.responseCode
-        } finally { c.disconnect() }
-    }
 }

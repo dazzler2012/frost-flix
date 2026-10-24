@@ -61,9 +61,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glasslauncher.tv.GlassApp
 import com.glasslauncher.tv.data.AppEntry
-import com.glasslauncher.tv.data.NuvioLaunch
-import com.glasslauncher.tv.net.Net
-import com.glasslauncher.tv.net.PhoneServer
 import com.glasslauncher.tv.saver.ScreensaverActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -76,7 +73,7 @@ private class Act(val title: String, val desc: String, val value: String = "", v
 private class Note(val text: String) : SRow
 private class AppItem(val entry: AppEntry) : SRow
 
-private enum class Kind { Rows, Phone, About }
+private enum class Kind { Rows, About }
 private class Category(val title: String, val kind: Kind = Kind.Rows, val rows: @Composable () -> List<SRow> = { emptyList() })
 
 private fun <T> cycle(list: List<T>, cur: T, d: Int): T {
@@ -118,7 +115,6 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
     val status by app.catalogs.status.collectAsState()
     val allApps by app.apps.apps.collectAsState()
     var dialog by remember { mutableStateOf<DialogState?>(null) }
-    var phoneDialog by remember { mutableStateOf(false) }
     var cat by remember { mutableIntStateOf(initialCat) }
     var shownCat by remember { mutableIntStateOf(initialCat) }
     LaunchedEffect(cat) { if (cat != shownCat) { kotlinx.coroutines.delay(120); shownCat = cat } }
@@ -240,7 +236,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 add(Adjust("Icon style", "How the plate behind every icon looks", {
                     styleName(st.tileStyle)
                 }, { st.tileStyle = cycle(listOf("liquid", "water", "water_still", "clear", "amoled", "bow"), st.tileStyle, it) }))
-                add(Note("Change one icon: on the home screen hold OK on the app → Change icon. Pick from an icon pack, the Apple TV icons, a photo on the TV, a link to a PNG, or send one from your phone (Manage from phone)."))
+                add(Note("Change one icon: on the home screen hold OK on the app → Change icon. Pick from an icon pack, a photo on the TV, or a link to a PNG."))
                 add(Note("Icon packs: install any Android TV / Projectivy icon pack from Google Play, then choose it above. Every app takes the pack's icon; you can still change single apps."))
                 add(Act("Find icon packs on Google Play", "Projectivy / Android TV icon packs", "") { openPlay(ctx, null, "projectivy icon pack") })
                 add(Note("Many icons at once: copy <package>.png files (e.g. com.netflix.ninja.png) into the icon folder below, then Import."))
@@ -256,9 +252,8 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
         },
         Category("Catalogs") {
             buildList {
-                add(Act("Add add-ons from my phone (QR)", "Scan the code, paste Nuvio manifest links and your TMDB token", "") { phoneDialog = true })
                 add(Act("TMDB token", "Title logos, full-size art, synopsis, platform", if (st.tmdbToken.isBlank()) "Not set" else "Set") {
-                    dialog = TextEntry("TMDB read access token", "", "Paste the token (easier from the phone: option above)") {
+                    dialog = TextEntry("TMDB read access token", "", "Paste the token") {
                         st.tmdbToken = it; app.catalogs.clearEnrichment()
                     }
                 })
@@ -282,38 +277,13 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 }
             }
         },
-        Category("Continue Watching") {
-            val cwList by app.cw.entries.collectAsState()
-            buildList {
-                add(Adjust("Show Continue Watching", "Where titles you are watching appear", {
-                    when (st.continueMode) { "off" -> "Off"; "mixed" -> "Mixed with catalogs"; else -> "At the start" }
-                }, { st.continueMode = cycle(listOf("first", "mixed", "off"), st.continueMode, it) }))
-                if (st.continueMode == "first") add(Adjust("Slides at the start", "How many titles in progress open the carousel", {
-                    if (st.cwLead <= 0) "All" else "${st.cwLead}"
-                }, { st.cwLead = cycle(listOf(1, 2, 3, 4, 5, 0), st.cwLead, it) }))
-                add(Toggle("Open on what I just watched", "Back from Nuvio, the carousel shows that title first", { st.continueJump }, { st.continueJump = it }))
-                add(Toggle("Progress bar", "Shows Continue · S1 · E3 · 42% under the title", { st.cwProgress }, { st.cwProgress = it }))
-                add(Note("Apps"))
-                add(Toggle("Nuvio Legacy", if (app.cw.hasLogAccess()) "Reading what you watch in Nuvio Legacy" else "Allow USB debugging for Glassio when the TV asks", { st.cwLegacy }, { st.cwLegacy = it }))
-                add(Note("Other apps (YouTube, Netflix, Apple TV…) keep their Continue Watching private on Google TV; only the system launcher may read it."))
-                add(Act("Clear the list", "${cwList.size} titles", "") { app.cw.clear() })
-                cwList.forEach { e ->
-                    add(Act(e.imdb + if (e.season > 0) "  S${e.season}E${e.episode}" else "", "${e.app} · ${e.percent}%", "Remove") { app.cw.remove(e.key) })
-                }
-            }
-        },
-        Category("Nuvio & Home Assistant") {
+        Category("Nuvio") {
             listOf(
                 Adjust("Open titles in", "Where a carousel title opens", { if (st.nuvioTarget == "reshaped") "Nuvio Re-Shaped" else "Nuvio Legacy" }, {
                     st.nuvioTarget = cycle(listOf("legacy", "reshaped"), st.nuvioTarget, it)
                 }),
-                Act("Home Assistant webhook", "Full webhook URL from your Home Assistant", if (st.haWebhook.isBlank()) "Not set" else "Set") {
-                    dialog = TextEntry("Home Assistant webhook", st.haWebhook, "http://homeassistant.local:8123/api/webhook/…") { st.haWebhook = it }
-                },
-                Toggle("Tell Home Assistant when a title opens", "Sends title, type and id as JSON", { st.haOnLaunch }, { st.haOnLaunch = it }),
-                Act("Send a test event", "") { io { NuvioLaunch.testWebhook(st, app.http) } },
                 Act("TMDB token", "Adds title logos, full-size art, synopsis and platform", if (st.tmdbToken.isBlank()) "Not set" else "Set") {
-                    dialog = TextEntry("TMDB read access token", "", "Paste the token (easier from the phone page)") {
+                    dialog = TextEntry("TMDB read access token", "", "Paste the token") {
                         st.tmdbToken = it; app.catalogs.clearEnrichment()
                     }
                 },
@@ -331,29 +301,20 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 add(Note("Recommended: Aerial Views. The best screensaver with Glassio: Apple, Amazon and your own 4K videos, clock and info, free on Google Play."))
                 if (!avInstalled) add(Act("Install Aerial Views", "Opens it on Google Play", "Google Play") { openPlay(ctx, aerialViews, null) })
                 else {
-                    add(Act("Make Aerial Views the TV screensaver", if (system.startsWith(aerialViews)) "Already set" else "Sets it in the TV and sets Type below to TV screensaver", "") {
-                        io {
-                            val r = com.glasslauncher.tv.data.LocalShell.run(ctx, "settings put secure screensaver_components $avComponent && settings put secure screensaver_enabled 1")
-                            if (r.isSuccess) { st.saverMode = "system"; "Aerial Views is now the TV screensaver" }
-                            else "Allow USB debugging for Glassio when the TV asks (Always allow), then try again"
-                        }
-                    })
                     add(Act("Open Aerial Views settings", "Choose videos, clock, overlays", "") {
                         ctx.packageManager.getLaunchIntentForPackage(aerialViews)?.let { runCatching { ctx.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
                     })
                 }
-                add(Note("Steps: 1. Install Aerial Views. 2. Make Aerial Views the TV screensaver (the TV asks once to allow USB debugging for Glassio: Always allow). 3. Type: TV screensaver. 4. Start after / Back starts it."))
+                add(Note("Steps: 1. Install Aerial Views. 2. Pick it in the TV's screensaver settings (Use as system screensaver, below)."))
                 add(Adjust("Start after", "Idle time on the launcher", { if (st.idleMinutes == 0) "Off" else "${st.idleMinutes} min" }, {
                     st.idleMinutes = cycle(listOf(0, 1, 2, 3, 5, 10, 15, 30), st.idleMinutes, it)
                 }))
                 add(Adjust("Type", "What plays when the screensaver starts", {
                     when (st.saverMode) {
                         "aerial" -> "Apple aerial videos"
-                        "system" -> "TV screensaver (" + (system.substringBefore('/').substringAfterLast('.').ifBlank { "system" }) + ")"
                         else -> "Posters with logos"
                     }
-                }, { st.saverMode = cycle(listOf("aerial", "slideshow", "system"), st.saverMode, it) }))
-                if (st.saverMode == "system") add(Note("Starts the screensaver chosen in Google TV settings (Aerial Views). The first time, the TV asks to allow USB debugging for Glassio: choose Always allow."))
+                }, { st.saverMode = cycle(listOf("aerial", "slideshow"), st.saverMode, it) }))
                 add(Toggle("Apple aerial videos", "Streams Apple's public aerial feed", { st.useAppleAerials }, { st.useAppleAerials = it }))
                 add(Toggle("Show clock", "", { st.saverClock }, { st.saverClock = it }))
                 add(Toggle("Back on the home screen starts it", "Like Apple TV: press Back on the home screen", { st.backSaver }, { st.backSaver = it }))
@@ -369,7 +330,6 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 add(Act("Use as system screensaver", "Pick Glassio in the list", "") { openSystem(ctx, AndroidSettings.ACTION_DREAM_SETTINGS) })
             }
         },
-        Category("Manage from phone", Kind.Phone),
         Category("System") {
             listOf(
                 Toggle("Home button opens Glassio", "Needs the accessibility service below", { st.interceptHome }, { st.interceptHome = it }),
@@ -426,8 +386,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 val c = categories[shownCat]
                 Column(Modifier.padding((18 * s).dp)) {
                     Text(c.title, color = Color.White, fontSize = (20 * s).sp, fontWeight = FontWeight.Light, modifier = Modifier.padding(start = (6 * s).dp, bottom = (8 * s).dp))
-                    if (c.kind == Kind.Phone) PhonePane(app, s)
-                    else if (c.kind == Kind.About) AboutPane(app, s, onApp = { e -> appMenu(app, e, ctx, scope) { dialog = it } })
+                    if (c.kind == Kind.About) AboutPane(app, s, onApp = { e -> appMenu(app, e, ctx, scope) { dialog = it } })
                     else {
                         val rows = c.rows()
                         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy((4 * s).dp)) {
@@ -439,16 +398,10 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
         }
     }
     DialogHost(dialog) { dialog = null }
-    if (phoneDialog) {
-        androidx.compose.ui.window.Dialog(onDismissRequest = { phoneDialog = false }) {
-            Box(
-                Modifier.width((520 * s).dp).height((380 * s).dp).clip(RoundedCornerShape((18 * s).dp))
-                    .background(Color(0xF0181820)).padding((18 * s).dp)
-                    .focusable(),
-            ) { PhonePane(app, s) }
-        }
-    }
 }
+
+/** The original Glassio project (credited in About). */
+private const val UPSTREAM_REPO = "mohammadmrh12/glassio"
 
 private suspend fun delay150() = kotlinx.coroutines.delay(150)
 
@@ -461,7 +414,6 @@ private fun appMenu(app: GlassApp, e: AppEntry, ctx: Context, scope: kotlinx.cor
             scope.launch(Dispatchers.IO) { toast(ctx, runCatching { app.icons.setFromUrl(e.pkg, u.trim()); "Icon updated" }.getOrElse { it.message ?: "Failed" }) }
         })
     }
-    opts += "Icon from my phone (Manage from phone)" to { toast(ctx, "Open Settings > Manage from phone, scan the QR code, then pick ${e.label}") }
     if (app.icons.has(e.pkg)) opts += "Reset to the original icon" to { app.icons.reset(e.pkg) }
     opts += "Open app" to { app.apps.launchIntent(e)?.let { runCatching { ctx.startActivity(it) } } }
     show(MenuDialog(e.label, opts))
@@ -565,71 +517,23 @@ private fun Frame(
     ) { content(focused) }
 }
 
-@Composable
-private fun PhonePane(app: GlassApp, s: Float) {
-    var url by remember { mutableStateOf<String?>(null) }
-    var failed by remember { mutableStateOf(false) }
-    var qr by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
-    DisposableEffect(Unit) {
-        val token = Net.token()
-        val server = PhoneServer(app, token)
-        val job = app.scope.launch(Dispatchers.IO) {
-            val port = server.start()
-            val ip = Net.localIp()
-            if (port != null && ip != null) {
-                val u = "http://$ip:$port/?t=$token"
-                val bmp = Net.qr(u, 480).asImageBitmap()
-                kotlinx.coroutines.withContext(Dispatchers.Main) { url = u; qr = bmp }
-            } else kotlinx.coroutines.withContext(Dispatchers.Main) { failed = true }
-        }
-        onDispose { job.cancel(); app.scope.launch(Dispatchers.IO) { job.join(); server.stop() } }
-    }
-    Column(Modifier.fillMaxSize().padding(start = (6 * s).dp)) {
-        Text(
-            "Scan the code with your phone (same Wi-Fi) to add add-ons, set app icons from your phone or a link, and paste tokens with a real keyboard.",
-            color = Color.White.copy(alpha = 0.7f), fontSize = (12.5f * s).sp,
-        )
-        Spacer(Modifier.height((14 * s).dp))
-        val code = qr
-        if (code != null) {
-            Image(code, "QR code", Modifier.size((190 * s).dp).clip(RoundedCornerShape((14 * s).dp)))
-            Spacer(Modifier.height((8 * s).dp))
-            Text(url ?: "", color = Color.White.copy(alpha = 0.6f), fontSize = (11 * s).sp)
-        } else if (failed) {
-            Text("The TV is not on a network, so the phone page can't start.", color = Color(0xFFFF8F9B), fontSize = (13 * s).sp)
-        }
-        Spacer(Modifier.height((10 * s).dp))
-        Text("The page stops when you leave this screen.", color = Color.White.copy(alpha = 0.45f), fontSize = (11 * s).sp)
-    }
-}
 
-
-/** Version, updates from GitHub, the project page as a QR code, credits and the last crash (if any). */
+/** Version, the original project's page as a QR code, credits and the last crash (if any). */
 @Composable
 private fun AboutPane(app: GlassApp, s: Float, onApp: (com.glasslauncher.tv.data.AppEntry) -> Unit) {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val rel by app.updater.available.collectAsState()
-    val status by app.updater.status.collectAsState()
-    val qr = remember { com.glasslauncher.tv.net.Net.qr(com.glasslauncher.tv.data.Updater.REPO_URL, 420).asImageBitmap() }
+    val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?" }
+    val qr = remember { com.glasslauncher.tv.net.Net.qr("https://github.com/$UPSTREAM_REPO", 420).asImageBitmap() }
     val crash = remember { java.io.File(ctx.filesDir, "last-crash.txt").takeIf { it.exists() }?.readText()?.lineSequence()?.take(2)?.joinToString(" · ").orEmpty() }
     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy((18 * s).dp)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Image(qr, "GitHub", Modifier.size((150 * s).dp).clip(RoundedCornerShape((12 * s).dp)))
             Spacer(Modifier.height((6 * s).dp))
-            Text("github.com/" + com.glasslauncher.tv.data.Updater.REPO, color = Color.White.copy(alpha = 0.75f), fontSize = (9.5f * s).sp)
+            Text("github.com/$UPSTREAM_REPO", color = Color.White.copy(alpha = 0.75f), fontSize = (9.5f * s).sp)
             Text("Scan with your phone", color = Color.White.copy(alpha = 0.5f), fontSize = (9 * s).sp)
         }
         val rows = buildList<SRow> {
-            add(Note("Glassio ${app.updater.current}"))
-            if (rel != null) {
-                add(Act("Install update ${rel!!.version}", if (status.isNotBlank()) status else "Downloads from GitHub and restarts Glass", "Install") { app.updater.install() })
-                rel!!.notes.lineSequence().map { it.trim().removePrefix("-").removePrefix("*").trim() }.filter { it.isNotBlank() && !it.startsWith("#") }
-                    .take(6).forEach { add(Note("• $it")) }
-            } else add(Act("Check for updates", if (status.isNotBlank()) status else "Looks at the latest release on GitHub", "Check") {
-                scope.launch(Dispatchers.IO) { toast(ctx, app.updater.check()) }
-            })
-            add(Note("A pill appears next to the clock when a new version is out."))
+            add(Note("Glassio (D) $version · hardened copy of Glassio, no self-updates"))
             add(Note("Made by Mohammad · Fonts: Inter (SIL OFL) · Weather: Open-Meteo · This product uses the TMDB API but is not endorsed or certified by TMDB."))
             if (crash.isNotBlank()) add(Act("Last crash", crash.take(120), "Clear") { java.io.File(ctx.filesDir, "last-crash.txt").delete(); toast(ctx, "Cleared") })
         }

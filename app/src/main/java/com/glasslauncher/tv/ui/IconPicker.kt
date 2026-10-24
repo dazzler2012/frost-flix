@@ -75,36 +75,15 @@ private sealed interface IconSource {
     object Suggested : IconSource { override val title = "Suggested" }
     class Pack(val pkg: String, override val title: String) : IconSource
     object Photos : IconSource { override val title = "Photos on this TV" }
-    /** Apple TV home-screen icons copied to the TV (tools/appletv_icons.py): default, dark, white, clear. */
-    class AppleTv(val variant: String, override val title: String) : IconSource
     object Link : IconSource { override val title = "From a link" }
-    object Phone : IconSource { override val title = "From my phone" }
     object Original : IconSource { override val title = "Original icon" }
 }
 
 private data class PackIcon(val pack: String, val name: String)
 
-private val ATV_VARIANTS = listOf("default" to "Apple TV icons", "dark" to "Apple TV · Dark", "white" to "Apple TV · White", "clear" to "Apple TV · Clear")
-
-/** The Apple TV icon library on this TV: Android/data/com.glasslauncher.tv/files/appletv/<variant>/<App>.png */
-fun appleTvDir(ctx: android.content.Context) = java.io.File(ctx.getExternalFilesDir(null), "appletv")
-
-private fun atvFiles(ctx: android.content.Context, variant: String): List<java.io.File> =
-    java.io.File(appleTvDir(ctx), variant).listFiles().orEmpty().filter { it.extension.lowercase() == "png" }.sortedBy { it.name.lowercase() }
-
-private fun atvKey(s: String) = s.lowercase().replace(Regex("(tv|app|plus|\\+|for|the)"), "").replace(Regex("[^\\p{L}\\p{N}]"), "")
-
-/** Apple TV icons whose name matches the app's name, in every look. */
-private fun atvMatches(ctx: android.content.Context, label: String): List<java.io.File> {
-    val k = atvKey(label); if (k.length < 2) return emptyList()
-    return ATV_VARIANTS.flatMap { (v, _) -> atvFiles(ctx, v) }.filter {
-        val f = atvKey(it.nameWithoutExtension); f.isNotEmpty() && (f == k || (f.length >= 4 && (k.startsWith(f) || f.startsWith(k))))
-    }
-}
-
-/** Full-screen chooser: an icon from any installed pack, a photo saved on the TV, a link, the phone, or the original. */
+/** Full-screen chooser: an icon from any installed pack, a photo saved on the TV, a link, or the original. */
 @Composable
-fun IconPicker(app: GlassApp, entry: AppEntry, onPhone: () -> Unit, onClose: () -> Unit) {
+fun IconPicker(app: GlassApp, entry: AppEntry, onClose: () -> Unit) {
     val s = LocalScale.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -112,9 +91,8 @@ fun IconPicker(app: GlassApp, entry: AppEntry, onPhone: () -> Unit, onClose: () 
     val sources = remember {
         buildList {
             add(IconSource.Suggested)
-            ATV_VARIANTS.forEach { (v, title) -> if (atvFiles(ctx, v).isNotEmpty()) add(IconSource.AppleTv(v, title)) }
             packs.forEach { add(IconSource.Pack(it.pkg, it.label)) }
-            add(IconSource.Photos); add(IconSource.Link); add(IconSource.Phone); add(IconSource.Original)
+            add(IconSource.Photos); add(IconSource.Link); add(IconSource.Original)
         }
     }
     var sel by remember { mutableIntStateOf(0) }
@@ -169,7 +147,6 @@ fun IconPicker(app: GlassApp, entry: AppEntry, onPhone: () -> Unit, onClose: () 
                                                     done(if (r.isSuccess) "Icon updated" else r.exceptionOrNull()?.message ?: "Failed")
                                                 }
                                             }
-                                            IconSource.Phone -> { onClose(); onPhone() }
                                             IconSource.Original -> { app.icons.reset(entry.pkg); done("Back to the original icon") }
                                             else -> sel = i
                                         }
@@ -185,12 +162,8 @@ fun IconPicker(app: GlassApp, entry: AppEntry, onPhone: () -> Unit, onClose: () 
                 (18 * s).dp, style = app.settings.panelStyle, darken = 0.6f,
             ) {
                 when (val src = sources[sel]) {
-                    IconSource.Suggested -> {
-                        val atv = remember(entry.pkg) { atvMatches(ctx, entry.label) }
-                        if (atv.isNotEmpty()) FileGrid(s, atv, labelled = true) { applyUri(Uri.fromFile(it)) }
-                        else PackGrid(app, s, suggested(app, entry), "No pack has an icon that matches this app. Pick a pack on the left to browse all its icons.") { applyPack(it) }
-                    }
-                    is IconSource.AppleTv -> FileGrid(s, remember(src.variant) { atvFiles(ctx, src.variant) }, labelled = false) { applyUri(Uri.fromFile(it)) }
+                    IconSource.Suggested ->
+                        PackGrid(app, s, suggested(app, entry), "No pack has an icon that matches this app. Pick a pack on the left to browse all its icons.") { applyPack(it) }
                     is IconSource.Pack -> PackGrid(app, s, allOf(app, src.pkg), "This pack has no icons.") { applyPack(it) }
                     IconSource.Photos -> PhotoGrid(app, s) { applyUri(it) }
                     else -> {}
@@ -201,27 +174,7 @@ fun IconPicker(app: GlassApp, entry: AppEntry, onPhone: () -> Unit, onClose: () 
     DialogHost(dialog) { dialog = null }
 }
 
-private fun IconSource.isBrowsable() = this is IconSource.Suggested || this is IconSource.Pack || this is IconSource.Photos || this is IconSource.AppleTv
-
-@Composable
-private fun FileGrid(s: Float, files: List<java.io.File>, labelled: Boolean, onPick: (java.io.File) -> Unit) {
-    val ctx = LocalContext.current
-    if (files.isEmpty()) { Hint("No icons here yet.", s); return }
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive((112 * s).dp),
-        contentPadding = PaddingValues((14 * s).dp),
-        horizontalArrangement = Arrangement.spacedBy((12 * s).dp),
-        verticalArrangement = Arrangement.spacedBy((12 * s).dp),
-    ) {
-        items(files, key = { it.absolutePath }) { f ->
-            val req = remember(f) { ImageRequest.Builder(ctx).data(f).size(400, 240).build() }
-            val name = f.nameWithoutExtension + if (labelled) " · " + (f.parentFile?.name ?: "").replaceFirstChar { it.uppercase() } else ""
-            PickTile(s, name, onClick = { onPick(f) }) {
-                AsyncImage(model = req, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
-            }
-        }
-    }
-}
+private fun IconSource.isBrowsable() = this is IconSource.Suggested || this is IconSource.Pack || this is IconSource.Photos
 
 @Composable
 private fun suggested(app: GlassApp, e: AppEntry): List<PackIcon>? {

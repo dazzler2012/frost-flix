@@ -40,9 +40,7 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
     lateinit var apps: AppRepository; private set
     /** Bumped on user input (throttled) so the clock / settings button can auto-hide. */
     val interaction = mutableLongStateOf(0L)
-    /** Set by `am start ... --ez open_folder true`: opens the Apps folder (testing without the remote). */
-    val requestFolder = androidx.compose.runtime.mutableStateOf(false)
-    /** Set by `am start ... --ei open_settings <tab>`: opens Settings on that tab. */
+    /** Set from inside the app (e.g. the carousel's "add catalogs" button): opens Settings on that tab. */
     val requestSettings = androidx.compose.runtime.mutableIntStateOf(-1)
     /** Bumped with every request, so asking for the same tab twice (or while the screen was asleep) still works. */
     val requestSettingsRev = androidx.compose.runtime.mutableIntStateOf(0)
@@ -51,9 +49,7 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         if (n - interaction.longValue > 400) interaction.longValue = n
     }
     lateinit var catalogs: CatalogRepository; private set
-    lateinit var cw: com.glasslauncher.tv.data.ContinueWatching; private set
     lateinit var weather: com.glasslauncher.tv.data.Weather; private set
-    lateinit var updater: com.glasslauncher.tv.data.Updater; private set
 
     override fun onCreate() {
         super.onCreate()
@@ -74,32 +70,9 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         packs = IconPacks(this)
         apps = AppRepository(this, settings, packs, icons).also { it.start() }
         catalogs = CatalogRepository(this, settings, http).also { it.start(scope) }
-        cw = com.glasslauncher.tv.data.ContinueWatching(this, settings, http, scope).also { it.start() }
         weather = com.glasslauncher.tv.data.Weather(settings, http, scope).also { it.start() }
-        updater = com.glasslauncher.tv.data.Updater(this, scope).also { it.start() }
-        // If Glass was closed while the TV screensaver was being started, put the screen timeout back.
-        Thread { com.glasslauncher.tv.saver.SystemDream.restoreIfPending(this) }.apply { isDaemon = true }.start()
         icons.importDropFolder(apps.apps.value.map { it.pkg })
-        ensureHomeService()
         // Decode dock artwork once, off the main thread, so the first frames are instant.
         scope.launch { apps.apps.value.forEach { runCatching { apps.artwork(it) } } }
-    }
-
-    /**
-     * Android drops a sideloaded app from the enabled accessibility services whenever it is updated.
-     * With WRITE_SECURE_SETTINGS (granted once over adb) Glass puts its Home-button service back.
-     */
-    fun ensureHomeService() {
-        if (!settings.interceptHome) return
-        if (checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
-        runCatching {
-            val me = "$packageName/${HomeKeyService::class.java.name}"
-            val cr = contentResolver
-            val cur = android.provider.Settings.Secure.getString(cr, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
-            val parts = cur.split(':').filter { it.isNotBlank() }
-            val mine = parts.any { it == me || it == "$packageName/.HomeKeyService" }
-            if (!mine) android.provider.Settings.Secure.putString(cr, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, (parts + me).joinToString(":"))
-            android.provider.Settings.Secure.putString(cr, android.provider.Settings.Secure.ACCESSIBILITY_ENABLED, "1")
-        }
     }
 }

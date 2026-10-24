@@ -110,14 +110,6 @@ class Settings(private val ctx: Context) {
     var cornerRadius: Int get() = i("cornerRadius", 14); set(v) = putI("cornerRadius", v.coerceIn(0, 40))
     /** Index of the Apps folder among the dock apps; -1 = after the last app. */
     var folderPos: Int get() = i("folderPos", -1); set(v) = putI("folderPos", v)
-    /** Continue Watching: off | first (at the start of the carousel) | mixed (among the catalogs) */
-    var continueMode: String get() = s("continueMode", "first"); set(v) = putS("continueMode", v)
-    /** After you leave the player, the carousel opens on what you just watched. */
-    /** How many titles in progress open the carousel (0 = all); the rest mix in with the catalogs. */
-    var cwLead: Int get() = i("cwLead", 1); set(v) = putI("cwLead", v)
-    var continueJump: Boolean get() = b("continueJump", true); set(v) = putB("continueJump", v)
-    var cwLegacy: Boolean get() = b("cwLegacy", true); set(v) = putB("cwLegacy", v)
-    var cwProgress: Boolean get() = b("cwProgress", true); set(v) = putB("cwProgress", v)
     /** 0.6 .. 1.0 (1.0 = full width) */
     var dockScale: Float get() = f("dockScale", 1.0f); set(v) = putF("dockScale", v.coerceIn(0.6f, 1.0f))
     /** Background of the dock and the Apps folder: liquid | clear | amoled | bow */
@@ -157,15 +149,13 @@ class Settings(private val ctx: Context) {
     var dockOrder: List<String> get() = list("dockOrder"); set(v) = putList("dockOrder", v)
     var hiddenApps: List<String> get() = list("hiddenApps"); set(v) = putList("hiddenApps", v)
 
-    // ---- Nuvio / Home Assistant
+    // ---- Nuvio
     /** legacy | reshaped */
     var nuvioTarget: String get() = s("nuvioTarget", "legacy"); set(v) = putS("nuvioTarget", v)
-    var haWebhook: String get() = s("haWebhook", ""); set(v) = putS("haWebhook", v.trim())
-    var haOnLaunch: Boolean get() = b("haOnLaunch", false); set(v) = putB("haOnLaunch", v)
 
     // ---- Screensaver
     var idleMinutes: Int get() = i("idleMinutes", 0); set(v) = putI("idleMinutes", v.coerceAtLeast(0))
-    /** aerial (Apple videos) | slideshow (posters with logos) | system (the TV's own screensaver, e.g. Aerial Views) */
+    /** aerial (Apple videos) | slideshow (posters with logos). An old "system" value reads as slideshow. */
     var saverMode: String get() = s("saverMode", "aerial"); set(v) = putS("saverMode", v)
     var useAppleAerials: Boolean get() = b("useAppleAerials", true); set(v) = putB("useAppleAerials", v)
     var aerialUrls: List<String> get() = list("aerialUrls"); set(v) = putList("aerialUrls", v)

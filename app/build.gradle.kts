@@ -8,19 +8,29 @@ android {
     namespace = "com.glasslauncher.tv"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.glasslauncher.tv"
+        applicationId = "tv.darren.glassio"
         minSdk = 26
         targetSdk = 35
         versionCode = 25
-        versionName = "1.9.3"
+        versionName = "1.9.3-d1"
+    }
+    // Release signing comes only from environment variables (set by CI from repository secrets).
+    // Without them the release APK is built unsigned. No keystore or password lives in this repo.
+    val storeFilePath = System.getenv("SIGNING_STORE_FILE")
+    if (!storeFilePath.isNullOrBlank()) {
+        signingConfigs.create("release") {
+            storeFile = file(storeFilePath)
+            storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+            keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+            keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+        }
     }
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Signed with the local debug key so it installs over the debug build and updates cleanly.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfigs.findByName("release")?.let { signingConfig = it }
         }
     }
     compileOptions {
@@ -50,6 +60,5 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.8.0")
     implementation("androidx.media3:media3-ui:1.8.0")
     implementation("com.google.zxing:core:3.5.3")
-    implementation("dev.mobile:dadb:1.2.10")
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 }
