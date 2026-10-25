@@ -22,7 +22,11 @@ jobs:
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
       - name: Build (unsigned)
-        run: ./gradlew --no-daemon assembleRelease
+        env:
+          TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+        run: |
+          [ -n "$TRAKT_CLIENT_ID" ] || echo "::warning title=No Trakt client ID::Secret TRAKT_CLIENT_ID is not set; this build shows \"Trakt not configured\"."
+          ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
           name: glassio-d-unsigned
@@ -73,7 +77,10 @@ jobs:
           SIGNING_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew --no-daemon assembleRelease
+          TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+        run: |
+          [ -n "$TRAKT_CLIENT_ID" ] || echo "::warning title=No Trakt client ID::Secret TRAKT_CLIENT_ID is not set; this release shows \"Trakt not configured\"."
+          ./gradlew --no-daemon assembleRelease
       - name: Rename APK
         run: |
           apk=app/build/outputs/apk/release/app-release.apk

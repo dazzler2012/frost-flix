@@ -162,7 +162,7 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
         }
     }
 
-    private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
+    fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
     private fun fetchCatalog(c: CatalogRef, limit: Int): List<HeroItem> {
         val base = c.addon.removeSuffix("/manifest.json").trimEnd('/')
@@ -187,7 +187,7 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
         .replace(u) { it.groupValues[1] + "original" + it.groupValues[3] }
         .replace(Regex("(metahub\\.space/(?:background|logo|poster))/(?:small|medium)/"), "$1/large/")
 
-    private fun parseMeta(m: JSONObject, catType: String): HeroItem? {
+    fun parseMeta(m: JSONObject, catType: String): HeroItem? {
         val id = first(m, "id", "_id", "imdb_id", "imdbId")
         val name = first(m, "name", "title", "original_name", "original_title")
         if (id.isBlank() || name.isBlank()) return null

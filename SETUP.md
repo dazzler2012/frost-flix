@@ -34,6 +34,20 @@ On GitHub, open the repository, then **Settings → Secrets and variables → Ac
 
 If any of them is missing, the release job stops at its first step and names the missing secret.
 
+### Trakt client ID (for Continue Watching)
+
+Add one more secret:
+
+| Name | Value |
+|---|---|
+| `TRAKT_CLIENT_ID` | the **Client ID** of your Trakt app |
+
+- Get it from your app in the Trakt developer portal. Only the Client ID is needed. Glassio never uses a Client Secret.
+- In the Trakt app settings, the redirect URI list must include `urn:ietf:wg:oauth:2.0:oob`. Glassio sends it when it renews the sign-in.
+- The ID is put into the APK at build time. It is never stored in this repository.
+- If the secret is missing, the build still works. The app then shows "Trakt not configured" on the Continue Watching page.
+- For a local build, set the environment variable `TRAKT_CLIENT_ID` before running Gradle. Don't write it into any file in the repo.
+
 ## 3. Make a release
 
 Every push to `main` builds an unsigned APK only to check that the build still works. It isn't installable.
@@ -66,6 +80,7 @@ To update later, repeat step 3 after publishing a new tag.
 - **Make it the home app:** Settings → System → Choose default home app.
 - **Home button:** Settings → System → turn on "Home button opens Glassio", then switch on the Glassio (D) accessibility service in the Android TV accessibility settings. Android turns that service off after every update of a sideloaded app, so turn it on again after updating.
 - **Weather:** Settings → Clock & glass → Weather → Off.
+- **Continue Watching:** Settings → Continue Watching → Sign in to Trakt. Open the address shown on your phone and type the code. The list comes from what NuvioTV scrobbles to Trakt, so turn on Trakt in NuvioTV too.
 - **Catalogs:** Settings → Catalogs → Add add-on link. Type the manifest URL with the remote. Only `https://` links work, because cleartext HTTP is blocked (except 127.0.0.1, which Connect to Nuvio uses).
 
 This app has its own package name (`tv.darren.glassio`), so it installs alongside the original Glassio and never replaces it.

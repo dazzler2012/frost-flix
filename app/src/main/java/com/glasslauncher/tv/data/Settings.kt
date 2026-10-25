@@ -149,6 +149,13 @@ class Settings(private val ctx: Context) {
     var dockOrder: List<String> get() = list("dockOrder"); set(v) = putList("dockOrder", v)
     var hiddenApps: List<String> get() = list("hiddenApps"); set(v) = putList("hiddenApps", v)
 
+    // ---- Continue Watching (from Trakt)
+    /** off | first (at the start of the carousel) | mixed (among the catalogs) */
+    var continueMode: String get() = s("continueMode", "first"); set(v) = putS("continueMode", v)
+    /** How many titles in progress open the carousel (0 = all); the rest mix in with the catalogs. */
+    var cwLead: Int get() = i("cwLead", 1); set(v) = putI("cwLead", v)
+    var cwProgress: Boolean get() = b("cwProgress", true); set(v) = putB("cwProgress", v)
+
     // ---- Nuvio
     /** auto | nuviotv | legacy | reshaped. "auto" opens titles in whichever Nuvio is installed, NuvioTV first. */
     var nuvioTarget: String get() = s("nuvioTarget", "auto"); set(v) = putS("nuvioTarget", v)

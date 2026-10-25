@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Glassio (D)".
-- `versionName` changed to `1.9.3-d2` (was `1.9.3-d1`). `versionCode` is 26 (upstream 25).
+- `versionName` changed to `1.9.3-d3`. `versionCode` is 27 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -91,6 +91,21 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 - "Open titles in" has a new default, "Automatic": NuvioTV first, then Nuvio Legacy, then Nuvio Re-Shaped, whichever is installed. A fixed choice that is not installed falls back to the same order.
 - If the installed Nuvio refuses the title link, Glassio opens the Nuvio app instead.
 - `com.nuvio.tv` was added to `<queries>` in the manifest and to the preferred apps list.
+
+## Added: Continue Watching from Trakt (1.9.3-d3)
+
+Continue Watching is back, but fed from Trakt instead of reading Nuvio's log over adb. Nothing adb-related returns.
+
+- **Sign-in:** Settings → Continue Watching → Sign in to Trakt. Device code flow with the Client ID only (no Client Secret). The TV shows the code and address, polls at Trakt's interval and stops when the code expires.
+- **Tokens:** stored only in app-private storage, encrypted with an AES-GCM key from the Android Keystore. Both tokens are replaced after every refresh. The access token is refreshed when it has less than a day left. If Trakt answers `invalid_grant`, the tokens are deleted and the page asks you to sign in again. Tokens are never logged.
+- **Sign out of Trakt:** deletes the tokens and the cached list, and asks Trakt to revoke the token.
+- **Data:** in-progress movies and episodes (`/sync/playback`) and the next episode of shows you are partway through (`/sync/progress/watched`). Cached in app-private storage. Fetched on app start and at most every 30 minutes.
+- **Carousel:** the Continue Watching slides and settings page are restored: "At the start" / "Mixed with catalogs" / "Off", "Slides at the start", and "Progress bar" with the "Continue · S1 · E3 · 42%" label. A next episode shows as "Up next · S1 · E4".
+- **Artwork:** from the meta resource of your own add-ons (Cinemeta is skipped), then TMDB when a token is set. The Cinemeta lookups are not back.
+- **Play:** opens the title in Nuvio with the existing launch code (NuvioTV first).
+- **Network:** the only new host is `https://api.trakt.tv`.
+- **Build:** the Client ID comes from the GitHub Actions secret `TRAKT_CLIENT_ID` and goes into `BuildConfig` at build time. It is not in the repo. Without it the page shows "Trakt not configured".
+- **Still removed:** "Open on what I just watched", the Nuvio Legacy log toggle, the pinned-image cache and the settings `continueJump` and `cwLegacy`.
 
 ## Not changed
 

@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.glasslauncher.tv.GlassApp
 import com.glasslauncher.tv.data.AppEntry
+import com.glasslauncher.tv.data.Trakt
 import com.glasslauncher.tv.saver.ScreensaverActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -274,6 +275,35 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                     add(Toggle(c.name, "${c.addonName} · ${c.type}", { c.key in selected }, {
                         app.catalogs.toggleCatalog(c.key)
                     }))
+                }
+            }
+        },
+        Category("Continue Watching") {
+            val trakt by app.trakt.state.collectAsState()
+            val cwList by app.cw.entries.collectAsState()
+            val fetched by app.cw.lastFetch.collectAsState()
+            buildList {
+                add(Adjust("Show Continue Watching", "Where titles you are watching appear", {
+                    when (st.continueMode) { "off" -> "Off"; "mixed" -> "Mixed with catalogs"; else -> "At the start" }
+                }, { st.continueMode = cycle(listOf("first", "mixed", "off"), st.continueMode, it) }))
+                if (st.continueMode == "first") add(Adjust("Slides at the start", "How many titles in progress open the carousel", {
+                    if (st.cwLead <= 0) "All" else "${st.cwLead}"
+                }, { st.cwLead = cycle(listOf(1, 2, 3, 4, 5, 0), st.cwLead, it) }))
+                add(Toggle("Progress bar", "Shows Continue · S1 · E3 · 42% under the title", { st.cwProgress }, { st.cwProgress = it }))
+                add(Note("Trakt"))
+                when (val t = trakt) {
+                    Trakt.State.NotConfigured -> add(Note("Trakt not configured. This build has no Trakt client ID (see SETUP.md)."))
+                    Trakt.State.SignedOut -> add(Act("Sign in to Trakt", "Continue Watching comes from what NuvioTV scrobbles to Trakt", "") { app.trakt.startSignIn() })
+                    is Trakt.State.Failed -> add(Act("Sign in to Trakt", t.message, "") { app.trakt.startSignIn() })
+                    is Trakt.State.Waiting -> {
+                        add(Note("On your phone, open ${t.url} and enter the code below."))
+                        add(Act("Code: ${t.userCode}", "Waiting for Trakt… The code works until " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t.expiresAt)), "Cancel") { app.trakt.cancelSignIn() })
+                    }
+                    Trakt.State.SignedIn -> {
+                        val ago = if (fetched <= 0L) "not loaded yet" else "updated ${((System.currentTimeMillis() - fetched) / 60_000).coerceAtLeast(0)} min ago"
+                        add(Note("Signed in to Trakt · ${cwList.size} titles · $ago. Updates at most every 30 minutes."))
+                        add(Act("Sign out of Trakt", "Removes the sign-in and the list from this TV", "") { io { app.trakt.signOut(); app.cw.clear(); "Signed out of Trakt" } })
+                    }
                 }
             }
         },

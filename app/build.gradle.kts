@@ -11,8 +11,12 @@ android {
         applicationId = "tv.darren.glassio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "1.9.3-d2"
+        versionCode = 27
+        versionName = "1.9.3-d3"
+        // Trakt client ID: from the environment (GitHub Actions secret TRAKT_CLIENT_ID), never from the repo.
+        // Empty in a local build without it; the app then shows "Trakt not configured".
+        val traktClientId = (System.getenv("TRAKT_CLIENT_ID") ?: "").trim().filter { it.isLetterOrDigit() }
+        buildConfigField("String", "TRAKT_CLIENT_ID", "\"$traktClientId\"")
     }
     // Release signing comes only from environment variables (set by CI from repository secrets).
     // Without them the release APK is built unsigned. No keystore or password lives in this repo.
@@ -37,7 +41,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 

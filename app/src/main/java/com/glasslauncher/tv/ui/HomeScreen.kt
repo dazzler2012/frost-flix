@@ -499,12 +499,34 @@ private fun HeroSection(
     val settings = app.settings
     val ctx = LocalContext.current
     val catalogItems by app.catalogs.items.collectAsState()
+    val cwItems by app.cw.items.collectAsState()
     val enrichedRaw by app.catalogs.enrichedItems.collectAsState()
     val status by app.catalogs.status.collectAsState()
     var index by remember { mutableIntStateOf(0) }
     var focused by remember { mutableStateOf(false) }
-    val items = catalogItems
+    val mode = settings.continueMode
+    val lead = settings.cwLead
+    val items = remember(catalogItems, cwItems, mode, lead) {
+        val cw = if (mode == "off") emptyList() else cwItems
+        val keys = cw.map { it.key }.toSet()
+        val rest = catalogItems.filterNot { it.key in keys }
+        when {
+            cw.isEmpty() -> catalogItems
+            else -> buildList {
+                // "At the start": the first [lead] titles open the carousel, the others follow one after
+                // every four catalog titles. "Mixed": all of them spread that way.
+                val head = if (mode == "mixed") 0 else if (lead <= 0) cw.size else lead.coerceAtMost(cw.size)
+                addAll(cw.take(head))
+                var c = head
+                rest.forEachIndexed { i, it -> if (i % 4 == 3 && c < cw.size) add(cw[c++]); add(it) }
+                while (c < cw.size) add(cw[c++])
+            }
+        }
+    }
+    // TMDB enrichment is cached per title; keep the progress of Continue Watching items on top of it.
     val enriched = enrichedRaw
+    val cwKeys = remember(cwItems) { cwItems.map { it.key } }
+    LaunchedEffect(cwKeys, settings.tmdbToken) { cwItems.forEach { app.catalogs.enrich(it) } }
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     val lifeState by lifecycle.currentStateFlow.collectAsState()
     val resumed = lifeState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
@@ -741,6 +763,24 @@ private fun HeroInfo(
                         if (it.rating.isNotBlank()) Chip("★ ${it.rating}", s * m)
                         if (it.year.isNotBlank()) Chip(it.year, s * m)
                         if (it.platform.isNotBlank()) Chip(it.platform, s * m)
+                    }
+                }
+                if (it.progress >= 0f && settings.cwProgress) {
+                    // In progress: "Continue · S1 · E3 · 42%" and a bar. Next episode of a show: "Up next · S1 · E4".
+                    val started = it.progress > 0f
+                    Spacer(Modifier.height((10 * s).dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            listOfNotNull(if (started) "Continue" else "Up next", it.sub.takeIf { x -> x.isNotBlank() },
+                                if (started) "${(it.progress * 100).toInt()}%" else null).joinToString("  ·  "),
+                            color = Color.White, fontSize = (10.5f * s * m).sp, fontWeight = FontWeight.Medium,
+                        )
+                        if (started) {
+                            Spacer(Modifier.width((8 * s).dp))
+                            Box(Modifier.width((90 * s).dp).height((3 * s).dp).clipR((2 * s).dp).background(Color.White.copy(alpha = 0.25f))) {
+                                Box(Modifier.fillMaxWidth(it.progress.coerceIn(0f, 1f)).height((3 * s).dp).background(Color.White))
+                            }
+                        }
                     }
                 }
                 if (settings.showGenres) {

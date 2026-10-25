@@ -50,6 +50,8 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
     }
     lateinit var catalogs: CatalogRepository; private set
     lateinit var weather: com.glasslauncher.tv.data.Weather; private set
+    lateinit var trakt: com.glasslauncher.tv.data.Trakt; private set
+    lateinit var cw: com.glasslauncher.tv.data.ContinueWatching; private set
 
     override fun onCreate() {
         super.onCreate()
@@ -71,6 +73,8 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         apps = AppRepository(this, settings, packs, icons).also { it.start() }
         catalogs = CatalogRepository(this, settings, http).also { it.start(scope) }
         weather = com.glasslauncher.tv.data.Weather(settings, http, scope).also { it.start() }
+        trakt = com.glasslauncher.tv.data.Trakt(this, scope)
+        cw = com.glasslauncher.tv.data.ContinueWatching(this, settings, http, trakt, catalogs, scope).also { it.start() }
         icons.importDropFolder(apps.apps.value.map { it.pkg })
         // Decode dock artwork once, off the main thread, so the first frames are instant.
         scope.launch { apps.apps.value.forEach { runCatching { apps.artwork(it) } } }
