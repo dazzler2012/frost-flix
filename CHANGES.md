@@ -13,10 +13,10 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `data/LocalShell.kt` deleted: the adb-over-localhost client, adb key generation and key storage (`files/adb/adbkey`), and silent `pm install`.
 - `dev.mobile:dadb` dependency and its ProGuard rules removed.
-- `data/ContinueWatching.kt` deleted: reading Nuvio's log through adb. Also removed with it:
-  - the "Continue Watching" settings page,
-  - the Continue Watching slides, progress line, "jump to what I just watched" and pinned-image cache in the carousel,
-  - the settings `continueMode`, `cwLead`, `continueJump`, `cwLegacy` and `cwProgress`.
+- The adb-based `data/ContinueWatching.kt` (reading Nuvio's log through adb) was deleted in 1.9.3-d1. Removed with it:
+  - "jump to what I just watched" and the pinned-image cache in the carousel,
+  - the settings `continueJump` and `cwLegacy`.
+  - Since 1.9.3-d3 a new `data/ContinueWatching.kt` feeds Continue Watching from Trakt instead, with no adb. It brought back the "Continue Watching" settings page, the slides and progress line, and the settings `continueMode`, `cwLead` and `cwProgress` (see "Added: Continue Watching from Trakt" below).
 - `saver/SystemDream.kt` deleted: starting the TV's own screensaver and changing the screen timeout through adb.
   - The screensaver type "TV screensaver" was removed.
   - The "Make Aerial Views the TV screensaver" button was removed (it wrote secure settings through adb). "Install Aerial Views", "Open Aerial Views settings" and "Use as system screensaver" remain.
@@ -168,3 +168,10 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 - **https only, and the messages say so:** icon links, video links and add-on links must start with `https://` (add-on links may also start with `stremio://`). Before, the text said `http://` was fine, and the request then failed on the cleartext block.
 - **Glass refraction:** both rows are hidden below Android 13, where refraction can't work.
 - **Logs:** a failed add-on manifest logs only the host and the exception's class name. A failed "Add add-on link" shows only the class name too.
+
+## Build workflow (1.9.3-d6)
+
+- `actions/checkout`, `actions/setup-java` and `gradle/actions/setup-gradle` are pinned to full commit SHAs (v4.4.0, v4.9.1 and v4.4.3: the commits `@v4` pointed to), with the version in a comment next to each.
+- The release job stops with an error if the tag is not `v` + `versionName` from `app/build.gradle.kts`.
+- Re-running the release job is safe: if the release already exists, its `frost-flix.apk` is replaced instead of failing.
+- CHANGES.md: the "Removed: adb client" section now says that the Trakt-based `ContinueWatching.kt` and three of its settings came back in 1.9.3-d3.

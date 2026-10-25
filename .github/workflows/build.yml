@@ -15,12 +15,12 @@ jobs:
     if: github.ref_type == 'branch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
       - name: Check Trakt client ID
         env:
           TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
@@ -61,12 +61,20 @@ jobs:
             echo "::error title=Missing signing secrets::These repository secrets are not set:$missing. Add them under Settings > Secrets and variables > Actions (see SETUP.md)."
             exit 1
           fi
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Check tag matches versionName
+        run: |
+          v=$(sed -n 's/^ *versionName *= *"\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          if [ -z "$v" ] || [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "::error title=Tag does not match the version::Tag is $GITHUB_REF_NAME, but app/build.gradle.kts has versionName '$v'. Tag this commit as v$v, or change versionName first."
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME matches versionName $v"
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
       - name: Decode keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -102,9 +110,14 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+        # Safe to re-run: if the release already exists, only its APK is replaced.
         run: |
-          gh release create "$GITHUB_REF_NAME" frost-flix.apk \
-            --repo "$GITHUB_REPOSITORY" --title "Frost-flix $GITHUB_REF_NAME" --generate-notes
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" frost-flix.apk --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" frost-flix.apk \
+              --repo "$GITHUB_REPOSITORY" --title "Frost-flix $GITHUB_REF_NAME" --generate-notes
+          fi
       - name: Remove keystore
         if: always()
         run: rm -f "$RUNNER_TEMP/release.jks"
