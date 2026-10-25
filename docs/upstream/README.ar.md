@@ -1,4 +1,4 @@
-> **Note:** this is the original Glassio README, kept for reference. It describes features that were removed from Glassio (D): adb, self-updates, the phone page, Home Assistant, Continue Watching, the TV-screensaver mode and the Apple TV icon library. See [CHANGES.md](../../CHANGES.md).
+> **Note:** this is the original Glassio README, kept for reference. It describes features that were removed from Glassio (D): adb, self-updates, the phone page, Home Assistant, Continue Watching, the TV-screensaver mode, Apple aerial videos, the seed.json import and the Apple TV icon library. See [CHANGES.md](../../CHANGES.md).
 
 <div dir="rtl">
 

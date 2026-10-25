@@ -77,32 +77,12 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
     }
 
     fun start(scope: CoroutineScope) {
-        importSeed()
         scope.launch(Dispatchers.IO) {
             while (true) {
                 runCatching { refresh() }
                 delay(30 * 60 * 1000L)
             }
         }
-    }
-
-    /** One-shot import file dropped by the user or by tooling: {"addons":[],"selected":[],"tmdb":""}. */
-    private fun importSeed() {
-        val f = File(ctx.getExternalFilesDir(null), "seed.json")
-        if (!f.exists()) return
-        runCatching {
-            val j = JSONObject(f.readText())
-            j.optJSONArray("addons")?.let { a ->
-                val set = (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() }.toSet()
-                if (set.isNotEmpty()) saveAddons(set + addons)
-            }
-            j.optJSONArray("selected")?.let { a ->
-                val set = (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() }.toSet()
-                if (set.isNotEmpty()) saveSelected(set)
-            }
-            j.optString("tmdb").takeIf { it.isNotBlank() }?.let { settings.tmdbToken = it }
-        }
-        f.delete()
     }
 
     private fun parseCatalogs(url: String, fallbackName: String, manifest: JSONObject): List<CatalogRef> {

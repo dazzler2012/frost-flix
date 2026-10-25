@@ -298,7 +298,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 val aerialViews = "com.neilturner.aerialviews"
                 val avInstalled = remember { runCatching { ctx.packageManager.getPackageInfo(aerialViews, 0) }.isSuccess }
                 val avComponent = "$aerialViews/.ui.screensaver.DreamActivity"
-                add(Note("Recommended: Aerial Views. The best screensaver with Glassio: Apple, Amazon and your own 4K videos, clock and info, free on Google Play."))
+                add(Note("Recommended: Aerial Views, a free system screensaver on Google Play with your own 4K videos, clock and info."))
                 if (!avInstalled) add(Act("Install Aerial Views", "Opens it on Google Play", "Google Play") { openPlay(ctx, aerialViews, null) })
                 else {
                     add(Act("Open Aerial Views settings", "Choose videos, clock, overlays", "") {
@@ -309,16 +309,9 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 add(Adjust("Start after", "Idle time on the launcher", { if (st.idleMinutes == 0) "Off" else "${st.idleMinutes} min" }, {
                     st.idleMinutes = cycle(listOf(0, 1, 2, 3, 5, 10, 15, 30), st.idleMinutes, it)
                 }))
-                add(Adjust("Type", "What plays when the screensaver starts", {
-                    when (st.saverMode) {
-                        "aerial" -> "Apple aerial videos"
-                        else -> "Posters with logos"
-                    }
-                }, { st.saverMode = cycle(listOf("aerial", "slideshow"), st.saverMode, it) }))
-                add(Toggle("Apple aerial videos", "Streams Apple's public aerial feed", { st.useAppleAerials }, { st.useAppleAerials = it }))
                 add(Toggle("Show clock", "", { st.saverClock }, { st.saverClock = it }))
                 add(Toggle("Back on the home screen starts it", "Like Apple TV: press Back on the home screen", { st.backSaver }, { st.backSaver = it }))
-                add(Act("Add video link", "A direct .mp4 / .mov link", "") {
+                add(Act("Add video link", "For Glassio as system screensaver: a direct https .mp4 / .mov link", "") {
                     dialog = TextEntry("Video link", "", "https://…/video.mp4") { u ->
                         if (u.startsWith("http")) st.aerialUrls = (st.aerialUrls + u.trim()).distinct() else toast(ctx, "The link must start with http")
                     }

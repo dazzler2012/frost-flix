@@ -18,7 +18,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
   - the Continue Watching slides, progress line, "jump to what I just watched" and pinned-image cache in the carousel,
   - the settings `continueMode`, `cwLead`, `continueJump`, `cwLegacy` and `cwProgress`.
 - `saver/SystemDream.kt` deleted: starting the TV's own screensaver and changing the screen timeout through adb.
-  - The screensaver type "TV screensaver" was removed. A stored value of `system` now plays the poster slideshow.
+  - The screensaver type "TV screensaver" was removed.
   - The "Make Aerial Views the TV screensaver" button was removed (it wrote secure settings through adb). "Install Aerial Views", "Open Aerial Views settings" and "Use as system screensaver" remain.
 
 ## Removed: self-updater
@@ -57,11 +57,26 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 - `tools/appletv_icons.py` and `tools/push_appletv_icons.sh` were deleted.
 - `docs/screenshots/` was deleted. The screenshots showed Apple TV icons and the Apple logo, along with other third-party logos and artwork.
 
+## Removed: Apple aerial videos
+
+- The in-app screensaver ("Type: Apple aerial videos") was removed, along with the "Apple aerial videos" toggle and the `sylvan.apple.com` feed in `saver/AerialSource.kt`.
+- The screensaver started by Glassio ("Start after", "Back starts it", "Preview now") now always shows the poster slideshow. The settings `saverMode` and `useAppleAerials` were removed, and the "Type" row is gone.
+- Kept: your own video links ("Add video link"). Only the system screensaver service (`GlassDreamService`, "Use as system screensaver") plays them.
+
+## Removed: seed.json import
+
+- `CatalogRepository.importSeed()` was removed. It read `seed.json` from the app's external files folder at startup and imported add-on URLs, catalog choices and a TMDB token from it. Tokens and add-ons can now only be entered on the TV.
+
+## Removed: upstream adb developer scripts
+
+- Deleted `tools/fs.sh`, `tools/fs2.sh`, `tools/jank.sh`, `tools/slidetest.sh`, `tools/soak.sh` and `tools/tvtest.sh`. They drove a TV over adb from a PC and were never part of the app.
+
 ## Network
 
-- `android:usesCleartextTraffic="false"`.
-- Remaining `http://` URL in app code: `CatalogRepository.connectLocal()` calls `http://127.0.0.1:8080-8089/api/addons` ("Connect to Nuvio"). Cleartext is now off, so this feature is expected to fail. This wasn't tested on a device. Add-ons can still be added with "Add add-on link" (https only).
-- Icon links and add-on links that start with `http://` will also fail. Use `https://`.
+- New `res/xml/network_security_config.xml`: cleartext is off by default, and allowed only for the domain `127.0.0.1` (subdomains not included).
+- `android:usesCleartextTraffic="false"` stays in the manifest. Android ignores it when a network security config is set.
+- The only remaining `http://` URL in app code is `CatalogRepository.connectLocal()` → `http://127.0.0.1:8080-8089/api/addons` ("Connect to Nuvio"). The config allows it. Not tested on a device.
+- Icon links, add-on links and video links that start with `http://` are blocked. Use `https://`.
 
 ## Docs and build
 
@@ -72,4 +87,4 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 ## Not changed
 
-- The accessibility service for the Home button, icon packs, add-on catalog carousel, weather, aerial-video and poster screensavers, glass, focus, carousel and dock behaviour.
+- The accessibility service for the Home button, icon packs, add-on catalog carousel, weather, the poster screensaver, glass, focus, carousel and dock behaviour.

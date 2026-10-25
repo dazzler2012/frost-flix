@@ -1,7 +1,5 @@
 # Setup: signing key, releases, installing on the Shield
 
-Replace `OWNER/REPO` below with this repository's GitHub path.
-
 ## 1. Create the signing key (once, on Windows)
 
 You need `keytool`, which comes with any Java JDK (for example Eclipse Temurin 17).
@@ -57,7 +55,7 @@ For later versions, raise `versionCode` and `versionName` in `app/build.gradle.k
 2. Allow Downloader to install apps. On Android TV 11 this is usually under **Settings → Device Preferences → Security & restrictions → Unknown sources**. The exact menu names may differ on your firmware.
 3. In Downloader, type this URL. It always points to the newest release:
 
-   `https://github.com/OWNER/REPO/releases/latest/download/glassio-d.apk`
+   `https://github.com/dazzler2012/frost-flix/releases/latest/download/glassio-d.apk`
 
 4. Choose **Install** when Downloader asks. Then delete the downloaded file when Downloader offers to.
 
@@ -68,6 +66,6 @@ To update later, repeat step 3 after publishing a new tag.
 - **Make it the home app:** Settings → System → Choose default home app.
 - **Home button:** Settings → System → turn on "Home button opens Glassio", then switch on the Glassio (D) accessibility service in the Android TV accessibility settings. Android turns that service off after every update of a sideloaded app, so turn it on again after updating.
 - **Weather:** Settings → Clock & glass → Weather → Off.
-- **Catalogs:** Settings → Catalogs → Add add-on link. Type the manifest URL with the remote. Only `https://` links work, because cleartext HTTP is blocked.
+- **Catalogs:** Settings → Catalogs → Add add-on link. Type the manifest URL with the remote. Only `https://` links work, because cleartext HTTP is blocked (except 127.0.0.1, which Connect to Nuvio uses).
 
 This app has its own package name (`tv.darren.glassio`), so it installs alongside the original Glassio and never replaces it.

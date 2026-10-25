@@ -155,9 +155,7 @@ class Settings(private val ctx: Context) {
 
     // ---- Screensaver
     var idleMinutes: Int get() = i("idleMinutes", 0); set(v) = putI("idleMinutes", v.coerceAtLeast(0))
-    /** aerial (Apple videos) | slideshow (posters with logos). An old "system" value reads as slideshow. */
-    var saverMode: String get() = s("saverMode", "aerial"); set(v) = putS("saverMode", v)
-    var useAppleAerials: Boolean get() = b("useAppleAerials", true); set(v) = putB("useAppleAerials", v)
+    /** The user's own video links, played by the system screensaver (GlassDreamService). */
     var aerialUrls: List<String> get() = list("aerialUrls"); set(v) = putList("aerialUrls", v)
     var saverClock: Boolean get() = b("saverClock", true); set(v) = putB("saverClock", v)
 

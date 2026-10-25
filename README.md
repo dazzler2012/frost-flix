@@ -8,7 +8,7 @@ A hardened, standalone copy of [Glassio](https://github.com/mohammadmrh12/glassi
 
 ## What is different
 
-Everything that needed adb, installed packages, ran a local server or sent data to a webhook has been removed. Settings are entered on the TV only. See [CHANGES.md](CHANGES.md) for the full list.
+Everything that needed adb, installed packages, ran a local server, streamed Apple's aerial feed, imported files from outside the app or sent data to a webhook has been removed. Settings are entered on the TV only. See [CHANGES.md](CHANGES.md) for the full list.
 
 ## Install and release
 
