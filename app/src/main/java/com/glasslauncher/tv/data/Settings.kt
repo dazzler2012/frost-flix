@@ -144,8 +144,9 @@ class Settings(private val ctx: Context) {
     /** package name of the selected icon pack, "" = none */
     var iconPack: String get() = s("iconPack", ""); set(v) = putS("iconPack", v)
     /** Weather in the top bar: off | temp | condition | city | all */
-    var weatherMode: String get() = s("weatherMode", "all"); set(v) = putS("weatherMode", v)
-    var weatherCity: String get() = s("weatherCity", "Baghdad"); set(v) = putS("weatherCity", v.trim())
+    var weatherMode: String get() = s("weatherMode", "off"); set(v) = putS("weatherMode", v)
+    /** Empty until the user types a city; no weather is fetched without one. */
+    var weatherCity: String get() = s("weatherCity", ""); set(v) = putS("weatherCity", v.trim())
     var weatherF: Boolean get() = b("weatherF", false); set(v) = putB("weatherF", v)
     var showDate: Boolean get() = b("showDate", true); set(v) = putB("showDate", v)
     /** tvOS look: icons are white until selected, then show their colours on a light plate. */
@@ -184,5 +185,5 @@ class Settings(private val ctx: Context) {
     var saverClock: Boolean get() = b("saverClock", true); set(v) = putB("saverClock", v)
 
     // ---- System
-    var interceptHome: Boolean get() = b("interceptHome", false); set(v) = putB("interceptHome", v)
+    var interceptHome: Boolean get() = b("interceptHome", false); set(v) { putB("interceptHome", v); com.glasslauncher.tv.HomeKeyService.setIntercept(v) }
 }

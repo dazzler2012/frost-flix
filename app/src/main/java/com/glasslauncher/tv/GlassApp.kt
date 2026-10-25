@@ -108,6 +108,7 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
             override fun onActivityDestroyed(a: Activity) {}
         })
         settings = Settings(this)
+        HomeKeyService.setIntercept(settings.interceptHome)
         if (settings.perfMode == "auto") settings.applyMode("auto")
         com.glasslauncher.tv.ui.GlassCache.res = settings.glassRes
         http = Http(this)

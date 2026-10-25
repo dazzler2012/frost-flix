@@ -48,7 +48,7 @@ object NuvioLaunch {
         return Intent(Intent.ACTION_VIEW, uri).setPackage(pkg).addFlags(flags)
     }
 
-    fun open(ctx: Context, s: Settings, http: Http, item: HeroItem) {
+    fun open(ctx: Context, s: Settings, item: HeroItem) {
         val pkg = packageName(ctx, s)
         if (pkg == null) {
             Toast.makeText(ctx, "Nuvio is not installed", Toast.LENGTH_LONG).show()

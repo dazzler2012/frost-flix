@@ -10,6 +10,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
+/** Sent with every request Frost-flix makes. */
+val USER_AGENT = "Frost-flix/${com.glasslauncher.tv.BuildConfig.VERSION_NAME}"
+
 /** Largest API reply read into memory (add-on catalogs, TMDB, Trakt, weather). */
 const val MAX_REPLY_BYTES = 5 * 1024 * 1024
 
@@ -48,7 +51,7 @@ class Http(ctx: Context) {
             val c = URL(url).openConnection() as HttpURLConnection
             c.connectTimeout = 8000; c.readTimeout = 12000
             c.setRequestProperty("Accept", "application/json")
-            c.setRequestProperty("User-Agent", "GlassLauncher/1.0")
+            c.setRequestProperty("User-Agent", USER_AGENT)
             if (bearer != null) c.setRequestProperty("Authorization", "Bearer $bearer")
             try {
                 if (c.responseCode !in 200..299) throw IllegalStateException("HTTP ${c.responseCode}")

@@ -207,11 +207,10 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         var fullBmp: ImageBitmap? = null
         var upgrade: kotlinx.coroutines.Deferred<coil3.request.ImageResult?>? = null
         val high = settings.imageQuality == "high"
-        val pinnedBmp = GlassCache.pinnedFull[u]
-        val orig = async { if (pinnedBmp != null) null else loader.execute(imgReq(ctx, if (high) sized(u, "w1280") else u)) }
+        val orig = async { loader.execute(imgReq(ctx, if (high) sized(u, "w1280") else u)) }
         val next = kotlinx.coroutines.coroutineScope {
             val g = async { GlassCache.get(ctx, u, settings.blurRadius) }
-            fullBmp = pinnedBmp ?: kotlinx.coroutines.withTimeoutOrNull(120) { bmpOf(orig.await()) }
+            fullBmp = kotlinx.coroutines.withTimeoutOrNull(120) { bmpOf(orig.await()) }
             if (fullBmp == null && !high && sized(u, "w1280") != u) {
                 fullBmp = bmpOf(loader.execute(imgReq(ctx, sized(u, "w1280"))))
                 upgrade = orig
@@ -222,7 +221,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         val first = backImgs == null
         fadeMs = if (app.browsing()) 220 else settings.transitionMs
         val (bw, bh) = bakeSize(ctx)
-        val src = fullBmp!!
+        val src = fullBmp
         val baked = BakeCache.get(u, src) ?: bakeCached(u, src, bw, bh)
         if (GlassHalf.peek(baked) == null) withContext(Dispatchers.Default) { GlassHalf.of(baked) }
         // Page and glass fade in the same frames with the same timing, so the bar never runs ahead.
@@ -313,7 +312,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         val veil = animateFloatAsState(if (expanded && !folderOpen) 1f else 0f, tween(320), label = "veil")
         // Clear glass shows the page picture itself (full resolution, scrims included); the small
         // GlassCache copy is only the fallback before the first picture is on screen.
-        val pageSharp = if (PageGlass.on.value) GlassHalf.peek(shownBackdrop) else null
+        val pageSharp = GlassHalf.peek(shownBackdrop)
         val env = GlassEnv(backImgs?.first, pageSharp ?: backImgs?.second, backImgs?.third, rootW, rootH, settings.glassTint, settings.refraction, 1f, wobble.asState(),
             prevImgs?.first, if (prevImgs != null) (GlassHalf.peek(prevBackdrop) ?: prevImgs?.second) else null, mix.asState(), veil, sharpIsPage = pageSharp != null)
         val radius = settings.cornerRadius
@@ -440,8 +439,6 @@ private fun PlayGlyph(modifier: Modifier, color: Color) {
  * Half-size copy of a baked page picture, for the clear glass: sharp (2x, not 4x, enlargement like the old
  * 480 px copy) and lined up exactly with the page, at a quarter of the texture reading a full-size copy costs.
  */
-/** Test switch: clear glass from the page picture, or from the small GlassCache copy. */
-object PageGlass { val on = mutableStateOf(true) }
 
 private object GlassHalf {
     private val map = java.util.WeakHashMap<ImageBitmap, ImageBitmap>()
@@ -700,7 +697,7 @@ private fun HeroSection(
                 item = shown, app = app, s = s, focused = focused, heroFocus = heroFocus, firstTile = firstTile,
                 onFocus = { focused = it },
                 onPrev = { app.navAt = System.currentTimeMillis(); index-- }, onNext = { app.navAt = System.currentTimeMillis(); index++ },
-                onOpen = { NuvioLaunch.open(ctx, settings, app.http, shown) },
+                onOpen = { NuvioLaunch.open(ctx, settings, shown) },
                 onLong = {
                     val base = enriched[shown.key] ?: shown
                     val options = artOptions(base)
@@ -896,7 +893,6 @@ private fun Title(item: HeroItem, mode: String, scale: Float, s: Float) {
     )
     if (mode == "text" || item.logo.isBlank()) { asText(); return }
     val ctx = LocalContext.current
-    val pinnedLogo = GlassCache.pinnedLogo[item.logo]
     val req = remember(item.logo) { imgReq(ctx, item.logo, 1000, 400) }
     var ratio by remember(item.logo) { mutableStateOf<Float?>(null) }
     var failed by remember(item.logo) { mutableStateOf(false) }
@@ -910,14 +906,6 @@ private fun Title(item: HeroItem, mode: String, scale: Float, s: Float) {
     val maxH = 118f * s * scale
     if (w > maxW) { w = maxW; h = w / r }
     if (h > maxH) { h = maxH; w = h * r }
-    if (pinnedLogo != null) {
-        val pr = (pinnedLogo.width.toFloat() / pinnedLogo.height).coerceIn(0.6f, 8f)
-        var ph = sqrt(area / pr); var pw = ph * pr
-        if (pw > maxW) { pw = maxW; ph = pw / pr }
-        if (ph > maxH) { ph = maxH; pw = ph * pr }
-        Image(pinnedLogo, item.name, contentScale = ContentScale.Fit, alignment = Alignment.CenterStart, modifier = Modifier.size(pw.dp, ph.dp))
-        return
-    }
     AsyncImage(
         model = req, contentDescription = item.name, contentScale = ContentScale.Fit, alignment = Alignment.CenterStart,
         onSuccess = { st ->

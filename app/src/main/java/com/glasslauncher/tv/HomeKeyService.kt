@@ -1,9 +1,11 @@
 package com.glasslauncher.tv
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
+import java.lang.ref.WeakReference
 
 /**
  * Home button → Frost-flix.
@@ -12,27 +14,34 @@ import android.view.accessibility.AccessibilityEvent
  * (switched on by the user under Settings > Accessibility) receives the Home key *before* the system
  * does and consumes it, so the stock launcher never appears and there is no flash.
  * The old window-change reaction is kept only as a fallback for devices that don't deliver key events.
+ *
+ * Cost: with key filtering on, Android hands every key press of the whole TV to this service first and
+ * waits for the answer. So the filter is only requested while "Home button opens Frost-flix" is on, and
+ * [onKeyEvent] is one comparison: every key except HOME is passed straight through, untouched.
  */
 class HomeKeyService : AccessibilityService() {
     private var lastLaunch = 0L
     private var homeDownAt = 0L
 
-    private fun enabled(): Boolean = (application as? GlassApp)?.settings?.interceptHome == true
-
     private fun showGlass() {
         val now = System.currentTimeMillis()
-        if (now - lastLaunch < 1000) return
+        if (now - lastLaunch < DEBOUNCE_MS) return
         lastLaunch = now
-        startActivity(
-            Intent(this, MainActivity::class.java)
-                .setAction(Intent.ACTION_MAIN)
-                .addCategory(Intent.CATEGORY_HOME)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        )
+        try {
+            startActivity(
+                Intent(this, MainActivity::class.java)
+                    .setAction(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_HOME)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            )
+        } catch (e: Exception) {
+            // Never crash the service (that would turn it off). The Home press is lost this once.
+            android.util.Log.w("FrostHome", "can't bring Frost-flix to the front: ${e.javaClass.simpleName}")
+        }
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (event.keyCode != KeyEvent.KEYCODE_HOME || !enabled()) return false
+        if (event.keyCode != KeyEvent.KEYCODE_HOME || !intercept) return false
         when (event.action) {
             KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) homeDownAt = System.currentTimeMillis()
             KeyEvent.ACTION_UP -> showGlass()
@@ -41,7 +50,7 @@ class HomeKeyService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || !enabled()) return
+        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || !intercept) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg != "com.google.android.apps.tv.launcherx" && pkg != "com.google.android.tvlauncher") return
         // Only reached when the Home key was not filtered above (e.g. Home from the Google TV remote app).
@@ -51,11 +60,41 @@ class HomeKeyService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        // Ask for key events explicitly; some TV builds ignore the flag from the XML alone.
-        serviceInfo = serviceInfo.apply {
-            flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
-        }
+        instance = WeakReference(this)
+        applyFilter()
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        if (instance?.get() === this) instance = null
+        return super.onUnbind(intent)
+    }
+
+    /** Asks for key events only while interception is on; otherwise the TV's keys never come through here. */
+    private fun applyFilter() {
+        val info = serviceInfo ?: return
+        val want = intercept
+        val has = info.flags and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS != 0
+        if (want == has) return
+        info.flags = if (want) info.flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
+            else info.flags and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS.inv()
+        serviceInfo = info
     }
 
     override fun onInterrupt() {}
+
+    companion object {
+        /** Second Home presses closer together than this are ignored (one press can arrive twice). */
+        private const val DEBOUNCE_MS = 400L
+
+        /** Mirror of Settings.interceptHome, read on every key press without touching preferences. */
+        @Volatile var intercept = false
+            private set
+        private var instance: WeakReference<HomeKeyService>? = null
+
+        /** Called at app start and when "Home button opens Frost-flix" changes. */
+        fun setIntercept(on: Boolean) {
+            intercept = on
+            instance?.get()?.let { s -> android.os.Handler(android.os.Looper.getMainLooper()).post { s.applyFilter() } }
+        }
+    }
 }

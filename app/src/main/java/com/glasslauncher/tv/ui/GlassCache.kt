@@ -45,32 +45,13 @@ object GlassCache {
     private val scope = CoroutineScope(SupervisorJob() + worker.asCoroutineDispatcher())
 
     /** Drops every glass copy (app in the background, or the TV low on memory). */
-    fun clear() { cache.evictAll(); pinned.clear() }
+    fun clear() = cache.evictAll()
 
-    fun peek(url: String, blur: Int): GlassImages? = pinned["$blur|$res|$url"] ?: cache.get("$blur|$res|$url")
-
-    /** Continue Watching titles: kept for as long as they are in the list, whatever else is browsed. */
-    private val pinned = java.util.concurrent.ConcurrentHashMap<String, GlassImages>()
-    val pinnedFull = java.util.concurrent.ConcurrentHashMap<String, ImageBitmap>()
-    val pinnedLogo = java.util.concurrent.ConcurrentHashMap<String, ImageBitmap>()
-
-    suspend fun pin(ctx: Context, url: String, blur: Int) {
-        val key = "$blur|$res|$url"
-        if (pinned.containsKey(key)) return
-        get(ctx, url, blur)?.let { pinned[key] = it }
-    }
-
-    /** Drops pins of titles that left Continue Watching. */
-    fun keepOnly(urls: Set<String>) {
-        pinned.keys.removeAll { k -> k.substringAfter('|').substringAfter('|') !in urls }
-        pinnedFull.keys.retainAll(urls)
-        pinnedLogo.keys.retainAll(urls)
-    }
+    fun peek(url: String, blur: Int): GlassImages? = cache.get("$blur|$res|$url")
 
     suspend fun get(ctx: Context, url: String, blur: Int): GlassImages? {
         val r = res
         val key = "$blur|$r|$url"
-        pinned[key]?.let { return it }
         cache.get(key)?.let { return it }
         val job = synchronized(pending) {
             pending.getOrPut(key) {

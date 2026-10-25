@@ -135,6 +135,8 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
         toast(ctx, runCatching { block() }.getOrElse { it.message ?: "Failed" })
     }
 
+    val refractionWorks = android.os.Build.VERSION.SDK_INT >= 33
+    val isTv = remember { ctx.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) }
     val categories = listOf(
         Category("Performance") {
             // Changing any value below (or the same value on another page) switches Mode to Custom: see Settings.userTuned().
@@ -156,9 +158,10 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                     { st.imageQuality = cycle(listOf("high", "max"), st.imageQuality, it) }),
                 Adjust("Prepare ahead", "Slides loaded before you get to them", { "${st.prefetchDepth}" }, { st.prefetchDepth += it }),
                 Adjust("Slide transition", "", { "${st.transitionMs} ms" }, { st.transitionMs += it * 50 }),
-                Adjust("Glass refraction", "0 = flat glass (lightest)", { "${st.refraction}" }, { st.refraction += it * 2 }),
+                // Refraction needs AGSL (Android 13+); below that the glass is always flat, so the row is hidden.
+                Adjust("Glass refraction", "0 = flat glass (lightest)", { "${st.refraction}" }, { st.refraction += it * 2 }).takeIf { refractionWorks },
                 Toggle("Backdrop gallery", "Several pictures per title", { st.heroGallery }, { st.heroGallery = it }),
-            )
+            ).filterNotNull()
         },
         Category("Carousel") {
             listOf(
@@ -208,15 +211,15 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 Adjust("Weather", "Top bar, next to the settings button", {
                     when (st.weatherMode) { "off" -> "Off"; "temp" -> "Temperature"; "condition" -> "Temperature + sky"; "city" -> "Temperature + city"; else -> "Everything" }
                 }, { st.weatherMode = cycle(listOf("all", "condition", "city", "temp", "off"), st.weatherMode, it); app.weather.reload() }),
-                Act("Weather city", st.weatherCity + app.weather.found.value.takeIf { it.isNotBlank() }?.let { "  →  $it" }.orEmpty(), "Change") {
-                    dialog = TextEntry("Weather city", st.weatherCity, "Baghdad") { st.weatherCity = it; app.weather.reload() }
+                Act("Weather city", st.weatherCity.ifBlank { "Not set" } + app.weather.found.value.takeIf { it.isNotBlank() }?.let { "  →  $it" }.orEmpty(), "Change") {
+                    dialog = TextEntry("Weather city", st.weatherCity, "City name") { st.weatherCity = it; app.weather.reload() }
                 },
                 Toggle("Fahrenheit", "", { st.weatherF }, { st.weatherF = it }),
                 Toggle("Auto-hide clock and settings button", "Hidden while you browse; they appear when you go up to the settings button", { st.topAutoHide }, { st.topAutoHide = it }),
                 Adjust("Shown at start for", "Then hidden until you go up to them", { "${st.topHideSec} s" }, { st.topHideSec += it }),
                 Adjust("Corner radius", "Dock and app tiles (0 = square)", { "${st.cornerRadius}" }, { st.cornerRadius += it * 2 }),
                 Adjust("Glass blur", "0 turns blur off", { "${st.blurRadius}" }, { st.blurRadius += it * 4 }),
-                Adjust("Glass refraction", "How much the rim bends what is behind it (0 = flat)", { "${st.refraction}" }, { st.refraction += it * 2 }),
+                Adjust("Glass refraction", "How much the rim bends what is behind it (0 = flat)", { "${st.refraction}" }, { st.refraction += it * 2 }).takeIf { refractionWorks },
                 Adjust("Glass brightness", "", { "${st.glassTint}" }, { st.glassTint += it * 2 }),
                 Toggle("Colour on focus", "Like tvOS: icons stay white, the selected one shows its colours on a light plate", { st.focusColor }, { st.focusColor = it }),
                 Adjust("Selected icon plate", "With Colour on focus", { if (st.focusPlate == "dark") "Dark" else "Light" },
@@ -224,7 +227,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 Toggle("Bounce at the edges", "Pressing past the first or last icon nudges it, like tvOS", { st.edgeBounce }, { st.edgeBounce = it }),
                 Toggle("Lift selected icon", "The selected icon rises a little, glass and all", { st.tileLift }, { st.tileLift = it }),
                 Toggle("Show phone apps too", "Apps without a TV launcher entry", { st.showMobileApps }, { st.showMobileApps = it; app.apps.reload() }),
-            )
+            ).filterNotNull()
         },
         Category("Dock & icons") {
             val imported = st.dockOrder.size // read for recomposition on reorder
@@ -362,7 +365,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 add(Toggle("Back on the home screen starts it", "Like Apple TV: press Back on the home screen", { st.backSaver }, { st.backSaver = it }))
                 add(Act("Add video link", "For Frost-flix as system screensaver: a direct https .mp4 / .mov link", "") {
                     dialog = TextEntry("Video link", "", "https://…/video.mp4") { u ->
-                        if (u.startsWith("http")) st.aerialUrls = (st.aerialUrls + u.trim()).distinct() else toast(ctx, "The link must start with http")
+                        if (u.trim().startsWith("https://")) st.aerialUrls = (st.aerialUrls + u.trim()).distinct() else toast(ctx, "The link must start with https://")
                     }
                 })
                 st.aerialUrls.forEach { u ->
@@ -376,7 +379,11 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
             listOf(
                 Toggle("Home button opens Frost-flix", "Needs the accessibility service below", { st.interceptHome }, { st.interceptHome = it }),
                 Act("Turn on the accessibility service", "Find Frost-flix and switch it on", "") { openSystem(ctx, AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS) },
-                Act("Choose default home app", "", "") { openSystem(ctx, AndroidSettings.ACTION_HOME_SETTINGS) },
+            ) + (
+                // Android TV / Google TV (Shield included) has no home app picker that works with the remote: keys
+                // stayed on Frost-flix behind it. On a TV the Home button is taken over by the accessibility service.
+                if (isTv) listOf(Note("Android TV has no usable \"default home app\" choice. To make Home open Frost-flix, switch on the option above, then turn on the Frost-flix accessibility service (Android Settings → Device Preferences → Accessibility → Frost-flix)."))
+                else listOf(Act("Choose default home app", "", "") { openSystem(ctx, AndroidSettings.ACTION_HOME_SETTINGS) })
             )
         },
         Category("About", Kind.About),

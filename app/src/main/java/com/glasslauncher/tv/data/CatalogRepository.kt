@@ -119,7 +119,7 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
                             runCatching {
                                 val m = http.json(u, 24L * 3600 * 1000)
                                 refs += parseCatalogs(u, java.net.URI(u).host ?: "Add-on", m)
-                            }.onFailure { android.util.Log.w("GlassCatalogs", "manifest failed for ${java.net.URI(u).host}: ${it.javaClass.simpleName} ${it.message}") }
+                            }.onFailure { android.util.Log.w("FrostCatalogs", "manifest failed for ${java.net.URI(u).host}: ${it.javaClass.simpleName}") }
                         }
                     }
                 }.awaitAll()
@@ -271,7 +271,8 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
 
     suspend fun addAddon(raw: String): String = withContext(Dispatchers.IO) {
         val url = normalize(raw)
-        val m = try { http.json(url, 0) } catch (e: Exception) { throw IllegalStateException("Could not read that add-on (${e.message})") }
+        require(url.startsWith("https://")) { "Add-on links must start with https:// (or stremio://)" }
+        val m = try { http.json(url, 0) } catch (e: Exception) { throw IllegalStateException("Could not read that add-on (${e.javaClass.simpleName})") }
         val refs = parseCatalogs(url, java.net.URI(url).host ?: "Add-on", m)
         sp.edit().putStringSet("manual_addons", manual + url).apply()
         saveAddons(addons + url)

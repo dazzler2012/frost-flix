@@ -157,3 +157,14 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 - **Failed updates:** retried after 1, 2, 5 and 15 minutes, then every 30 minutes. The page shows the last error ("Couldn't update at 21:04: HTTP 503 · … · next try in 5 min") until an update works. OK on the Trakt row still updates at once and shows the result.
 - **Force Trakt refresh now (hidden):** hold OK on "Signed in as …". Refreshes the token at once and shows "Refresh OK · new token valid until …" or the error (HTTP status and Trakt's `error` / `error_description`). The refresh sends `client_id`, `refresh_token`, `grant_type` and `redirect_uri`, no client secret, as Trakt's openapi.json describes. No token is ever shown.
 - **Cancel during sign-in:** a reply that arrives after Cancel is ignored; its tokens are never saved.
+
+## Home button and small fixes (1.9.3-d6)
+
+- **Home button service:** asks Android for key events only while "Home button opens Frost-flix" is on (requested at runtime, no longer in the XML). Before, with the service switched on, every key press of the TV went through Frost-flix first, even with the option off. While it is on, the service checks one thing per key (is it HOME?) and passes every other key straight through. Two Home presses less than 400 ms apart count as one (was 1 s). If Frost-flix can't be brought to the front, the service logs it instead of crashing.
+- **"Choose default home app":** hidden on Android TV / Google TV devices (Shield included). On the Shield the system picker opened, but the remote's keys kept moving focus in Frost-flix's settings behind it. In its place, System explains the accessibility-service route. The row stays on non-TV devices.
+- **Removed:** the `WAKE_LOCK` permission (nothing used it), the unused pinned-image code in `GlassCache` and the carousel, the `PageGlass` test switch, the unused `http` parameter of `NuvioLaunch.open`, and `tools/patch_193.py`, `patch_194.py` and `patch_195.py` (one-off upstream edit scripts).
+- **Weather:** off by default, with no default city (was Baghdad). Nothing is fetched until you choose a city and switch weather on. A city you already set stays.
+- **User-Agent:** `Frost-flix/<version>` for every request (was `GlassLauncher/1.0` for add-ons, TMDB, weather and icon links).
+- **https only, and the messages say so:** icon links, video links and add-on links must start with `https://` (add-on links may also start with `stremio://`). Before, the text said `http://` was fine, and the request then failed on the cleartext block.
+- **Glass refraction:** both rows are hidden below Android 13, where refraction can't work.
+- **Logs:** a failed add-on manifest logs only the host and the exception's class name. A failed "Add add-on link" shows only the class name too.
