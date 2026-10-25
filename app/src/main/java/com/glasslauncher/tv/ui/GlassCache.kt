@@ -44,6 +44,9 @@ object GlassCache {
     }
     private val scope = CoroutineScope(SupervisorJob() + worker.asCoroutineDispatcher())
 
+    /** Drops every glass copy (app in the background, or the TV low on memory). */
+    fun clear() { cache.evictAll(); pinned.clear() }
+
     fun peek(url: String, blur: Int): GlassImages? = pinned["$blur|$res|$url"] ?: cache.get("$blur|$res|$url")
 
     /** Continue Watching titles: kept for as long as they are in the list, whatever else is browsed. */

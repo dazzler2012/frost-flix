@@ -31,7 +31,9 @@ class Settings(private val ctx: Context) {
 
     /**
      * What this TV can carry, from its memory and GPU: 2 GB / GLES 2 boxes get "performance",
-     * ~4 GB boxes (Google TV Streamer, Shield) "balanced", bigger ones "quality".
+     * 3-4 GB boxes (Shield TV Pro, Google TV Streamer) "balanced", bigger ones "quality".
+     * The Android version is not a reason to drop to "performance": below Android 13 the glass
+     * refraction simply stays off (it needs AGSL), the rest of "balanced" works the same.
      */
     fun deviceTier(): String {
         val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
@@ -40,13 +42,15 @@ class Settings(private val ctx: Context) {
         val gles = am.deviceConfigurationInfo.reqGlEsVersion
         val cores = Runtime.getRuntime().availableProcessors()
         return when {
-            am.isLowRamDevice || gb < 2.6 || gles < 0x30000 || android.os.Build.VERSION.SDK_INT < 33 -> "performance"
+            am.isLowRamDevice || gb < 2.6 || gles < 0x30000 -> "performance"
             gb < 5.0 || cores < 6 -> "balanced"
             else -> "quality"
         }
     }
     /** The tier Auto picked, for display. */
     val autoTier: String by lazy { deviceTier() }
+    /** performance | balanced | quality | custom: what is in effect, with Auto resolved. */
+    fun effectiveMode(): String = perfMode.let { if (it == "auto") autoTier else it }
 
     /** Glass copies of the backdrop: 480 px (light, default) or 720 px (crisper glass, more memory). */
     var glassRes: Int get() = i("glassRes", 480); set(v) = putI("glassRes", if (v >= 720) 720 else 480)

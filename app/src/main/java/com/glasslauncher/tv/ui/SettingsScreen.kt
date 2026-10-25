@@ -66,6 +66,7 @@ import com.glasslauncher.tv.data.Trakt
 import com.glasslauncher.tv.saver.ScreensaverActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 private sealed interface SRow
@@ -247,8 +248,10 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 add(Note("On the home screen, hold OK on an app for App info, Move, Change icon and Hide."))
                 add(Note("Here: OK picks an app up, ◀ ▶ moves it, OK puts it down. Hold OK (or Menu) for its options."))
                 add(Act("Import icons from the icon folder", "", "") {
-                    val n = app.icons.importDropFolder(app.apps.apps.value.map { it.pkg })
-                    toast(ctx, if (n > 0) "Imported $n icons" else "No new icons. Folder: ${app.icons.dropFolder.absolutePath}")
+                    io {
+                        val n = app.icons.importDropFolder(app.apps.apps.value.map { it.pkg })
+                        if (n > 0) "Imported $n icons" else "No new icons. Folder: ${app.icons.dropFolder.absolutePath}"
+                    }
                 })
                 add(Note("Folder for <package>.png files: ${app.icons.dropFolder.absolutePath}"))
                 app.apps.ordered(includeHidden = true).forEach { add(AppItem(it)) }
@@ -301,6 +304,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                     val ago = if (fetched <= 0L) "not loaded yet" else "updated ${((System.currentTimeMillis() - fetched) / 60_000).coerceAtLeast(0)} min ago"
                     add(TraktBox(trakt, traktUser, "${cwList.size} titles · $ago · OK updates now (otherwise at most every 30 minutes)") {
                         when (trakt) {
+                            Trakt.State.Checking -> Unit
                             Trakt.State.Starting, is Trakt.State.Waiting -> app.trakt.cancelSignIn()
                             Trakt.State.SignedIn -> io { app.cw.fetch(true); "Continue Watching updated" }
                             else -> app.trakt.startSignIn()
@@ -368,8 +372,11 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
         Category("About", Kind.About),
     )
 
-    // Catalog choices made here are applied when the screen closes.
-    DisposableEffect(Unit) { onDispose { app.scope.launch(Dispatchers.IO) { runCatching { app.catalogs.refresh() } } } }
+    // Catalog choices made here are applied when the screen closes, but only if they changed what the
+    // carousel was last loaded with (selected catalogs, titles per catalog, total titles, shuffle).
+    DisposableEffect(Unit) {
+        onDispose { if (app.catalogs.needsReload()) app.scope.launch(Dispatchers.IO) { runCatching { app.catalogs.refresh() } } }
+    }
     BackHandler { if (rightFocused) runCatching { catFocus[cat].requestFocus() } else onClose() }
     LaunchedEffect(Unit) { delay150(); runCatching { firstCat.requestFocus() } }
 
@@ -531,12 +538,10 @@ private fun TraktBoxView(row: TraktBox, s: Float) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (t is Trakt.State.Waiting) {
-            val qr = remember(t.qrUrl) { com.glasslauncher.tv.net.Net.qr(t.qrUrl, 600, margin = 4).asImageBitmap() }
-            Image(
-                qr, "QR code: ${t.qrUrl}",
-                Modifier.size((210 * s).dp).clip(RoundedCornerShape((10 * s).dp)),
-                filterQuality = androidx.compose.ui.graphics.FilterQuality.None,
-            )
+            val qr = rememberQr(t.qrUrl, 600, margin = 4)
+            Box(Modifier.size((210 * s).dp).clip(RoundedCornerShape((10 * s).dp)).background(Color.White)) {
+                qr?.let { Image(it, "QR code: ${t.qrUrl}", Modifier.fillMaxSize(), filterQuality = androidx.compose.ui.graphics.FilterQuality.None) }
+            }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy((4 * s).dp)) {
             when (t) {
@@ -558,6 +563,7 @@ private fun TraktBoxView(row: TraktBox, s: Float) {
                 else -> Unit
             }
             val (title, desc) = when (t) {
+                Trakt.State.Checking -> "Trakt" to "Checking the sign-in…"
                 Trakt.State.Starting, is Trakt.State.Waiting -> "Cancel" to "Stop signing in"
                 Trakt.State.SignedIn -> (if (row.username.isNotBlank()) "Signed in as ${row.username}" else "Signed in to Trakt") to row.signedInInfo
                 is Trakt.State.Failed -> "Sign in to Trakt" to "Try again"
@@ -603,16 +609,25 @@ private fun Frame(
 }
 
 
+/** A QR code made off the main thread (a 600 px code is 360 000 pixels); null until it is ready. */
+@Composable
+private fun rememberQr(text: String, sizePx: Int, margin: Int = 2): ImageBitmap? =
+    produceState<ImageBitmap?>(null, text, sizePx, margin) {
+        value = withContext(Dispatchers.Default) { runCatching { com.glasslauncher.tv.net.Net.qr(text, sizePx, margin).asImageBitmap() }.getOrNull() }
+    }.value
+
 /** Version, the original project's page as a QR code, credits and the last crash (if any). */
 @Composable
 private fun AboutPane(app: GlassApp, s: Float, onApp: (com.glasslauncher.tv.data.AppEntry) -> Unit) {
     val ctx = LocalContext.current
     val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?" }
-    val qr = remember { com.glasslauncher.tv.net.Net.qr("https://github.com/$UPSTREAM_REPO", 420).asImageBitmap() }
+    val qr = rememberQr("https://github.com/$UPSTREAM_REPO", 420)
     val crash = remember { java.io.File(ctx.filesDir, "last-crash.txt").takeIf { it.exists() }?.readText()?.lineSequence()?.take(2)?.joinToString(" · ").orEmpty() }
     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy((18 * s).dp)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(qr, "GitHub", Modifier.size((150 * s).dp).clip(RoundedCornerShape((12 * s).dp)))
+            Box(Modifier.size((150 * s).dp).clip(RoundedCornerShape((12 * s).dp)).background(Color.White)) {
+                qr?.let { Image(it, "GitHub", Modifier.fillMaxSize()) }
+            }
             Spacer(Modifier.height((6 * s).dp))
             Text("github.com/$UPSTREAM_REPO", color = Color.White.copy(alpha = 0.75f), fontSize = (9.5f * s).sp)
             Text("Scan with your phone", color = Color.White.copy(alpha = 0.5f), fontSize = (9 * s).sp)

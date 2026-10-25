@@ -1,6 +1,9 @@
 package com.glasslauncher.tv
 
+import android.app.Activity
 import android.app.Application
+import android.content.ComponentCallbacks2
+import android.os.Bundle
 import com.glasslauncher.tv.data.AppRepository
 import com.glasslauncher.tv.data.CatalogRepository
 import com.glasslauncher.tv.data.Http
@@ -11,20 +14,48 @@ import androidx.compose.runtime.mutableLongStateOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
-    /** Bigger caches than Coil's defaults: backdrops and logos come back instantly when you browse back. */
+    /**
+     * Image caches sized for TV boxes that also have to play video: 15% of the app's memory class for
+     * decoded pictures, 256 MB on disk (small boxes such as the Shield have little free storage).
+     */
     override fun newImageLoader(context: coil3.PlatformContext): coil3.ImageLoader =
         coil3.ImageLoader.Builder(context)
-            .memoryCache { coil3.memory.MemoryCache.Builder().maxSizePercent(context, when (settings.perfMode) { "performance" -> 0.2; "quality" -> 0.3; else -> 0.25 }).build() }
+            .memoryCache { coil3.memory.MemoryCache.Builder().maxSizePercent(context, 0.15).build() }
             .diskCache {
                 coil3.disk.DiskCache.Builder()
                     .directory(java.io.File(cacheDir, "images").absolutePath.let { okio.Path.Companion.run { it.toPath() } })
-                    .maxSizeBytes(768L * 1024 * 1024)
+                    .maxSizeBytes(256L * 1024 * 1024)
                     .build()
             }
             .build()
+
+    /**
+     * True while any Frost-flix activity is started (ON_START .. ON_STOP). Background loops wait on it, so
+     * nothing runs while another app (e.g. NuvioTV playing a stream) is in front.
+     */
+    private val _foreground = MutableStateFlow(false)
+    val foreground: StateFlow<Boolean> = _foreground
+    private var started = 0
+
+    /** Drops every large cached bitmap: page backdrops, glass copies and Coil's decoded pictures. */
+    fun releaseImages() {
+        com.glasslauncher.tv.ui.releaseBitmaps()
+        runCatching { coil3.SingletonImageLoader.get(this).memoryCache?.clear() }
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // UI_HIDDEN and above: we are in the background; RUNNING_LOW / CRITICAL: the TV is short of memory.
+        @Suppress("DEPRECATION")
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN || level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) releaseImages()
+    }
 
     /** Bumped when Home is pressed while Glass is already in front: the carousel goes back to its start. */
     val homeRev = androidx.compose.runtime.mutableIntStateOf(0)
@@ -64,6 +95,18 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
             }
             previous?.uncaughtException(t, e)
         }
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityStarted(a: Activity) { started++; _foreground.value = true }
+            override fun onActivityStopped(a: Activity) {
+                started = (started - 1).coerceAtLeast(0)
+                if (started == 0) { _foreground.value = false; releaseImages() }
+            }
+            override fun onActivityCreated(a: Activity, b: Bundle?) {}
+            override fun onActivityResumed(a: Activity) {}
+            override fun onActivityPaused(a: Activity) {}
+            override fun onActivitySaveInstanceState(a: Activity, b: Bundle) {}
+            override fun onActivityDestroyed(a: Activity) {}
+        })
         settings = Settings(this)
         if (settings.perfMode == "auto") settings.applyMode("auto")
         com.glasslauncher.tv.ui.GlassCache.res = settings.glassRes
@@ -71,11 +114,12 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         icons = IconStore(this)
         packs = IconPacks(this)
         apps = AppRepository(this, settings, packs, icons).also { it.start() }
-        catalogs = CatalogRepository(this, settings, http).also { it.start(scope) }
-        weather = com.glasslauncher.tv.data.Weather(settings, http, scope).also { it.start() }
+        catalogs = CatalogRepository(this, settings, http).also { it.start(scope, foreground) }
+        weather = com.glasslauncher.tv.data.Weather(settings, http, scope, foreground).also { it.start() }
         trakt = com.glasslauncher.tv.data.Trakt(this, scope)
-        cw = com.glasslauncher.tv.data.ContinueWatching(this, settings, http, trakt, catalogs, scope).also { it.start() }
-        icons.importDropFolder(apps.apps.value.map { it.pkg })
+        cw = com.glasslauncher.tv.data.ContinueWatching(this, settings, http, trakt, catalogs, scope, foreground).also { it.start() }
+        // Icon files from the drop folder are decoded off the main thread.
+        scope.launch(Dispatchers.IO) { runCatching { icons.importDropFolder(apps.apps.value.map { it.pkg }) } }
         // Decode dock artwork once, off the main thread, so the first frames are instant.
         scope.launch { apps.apps.value.forEach { runCatching { apps.artwork(it) } } }
     }

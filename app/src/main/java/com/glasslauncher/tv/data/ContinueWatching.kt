@@ -5,6 +5,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -35,6 +37,7 @@ class ContinueWatching(
     private val trakt: Trakt,
     private val catalogs: CatalogRepository,
     private val scope: CoroutineScope,
+    private val foreground: StateFlow<Boolean>,
 ) {
     private val sp = ctx.getSharedPreferences("glass_cw_trakt", Context.MODE_PRIVATE)
     private val fetchLock = Mutex()
@@ -46,7 +49,9 @@ class ContinueWatching(
         trakt.onSignedIn = { scope.launch(Dispatchers.IO) { fetch(force = true) } }
         scope.launch(Dispatchers.IO) {
             rebuildItems()
+            trakt.ready.await()
             while (true) {
+                foreground.first { it }
                 runCatching { fetch(force = false) }
                 delay(60_000)
             }

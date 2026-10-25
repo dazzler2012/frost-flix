@@ -136,3 +136,15 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 ## Not changed
 
 - The accessibility service for the Home button, icon packs, add-on catalog carousel, weather, the poster screensaver, glass, focus, carousel and dock behaviour.
+
+## Performance and memory (1.9.3-d6)
+
+- **Background:** catalog refresh, weather and Continue Watching wait while no Frost-flix screen is started (from ON_STOP until ON_START), so nothing runs while NuvioTV or another app is in front. The carousel's TMDB lookups and picture preloading also stop then (slide and gallery timers already stopped).
+- **Memory released in the background:** when the last Frost-flix screen stops, and in `onTrimMemory` (UI hidden, or the TV running low), the baked backdrops, glass copies and Coil's decoded pictures are dropped. The home screen also lets go of the pictures it shows and loads them again on return (from the disk cache).
+- **Image caches:** Coil's memory cache is 15% of the app's memory class (was 20–30% by mode), the disk cache is 256 MB (was 768 MB).
+- **Baked backdrops:** never larger than 1920×1080, whatever size the screen reports. At most 2 are kept in "performance" mode (4 otherwise). A bake is no longer thrown away when you move on before it finishes.
+- **Preloading:** keyed on the slides it prepares, not on the number of TMDB results, so it no longer restarts (and bakes again) every time any title gets its TMDB details.
+- **Auto mode:** picks "balanced" for 3–4 GB boxes again, also below Android 13 (e.g. Shield TV Pro on Android 11). Boxes under 2.6 GB (e.g. the 2 GB Shield TV) stay on "performance". Glass refraction still needs Android 13.
+- **Off the main thread:** reading the stored Trakt sign-in (Keystore decrypt) at app start, the QR codes in Settings, and importing icons from the icon folder. Settings → Continue Watching shows "Checking the sign-in…" for that moment.
+- **Settings:** closing Settings reloads the carousel only when the selected catalogs, "Titles per catalog", "Total titles" or "Shuffle" changed.
+- **Reply size:** API replies (add-ons, TMDB, Trakt, weather) are read up to 5 MB. A larger reply fails with "Reply is larger than 5 MB" (the cached copy is used if there is one).

@@ -9,6 +9,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -76,14 +77,22 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
         return u
     }
 
-    fun start(scope: CoroutineScope) {
+    /** Refreshes every 30 minutes, but only while Frost-flix is in front ([foreground]). */
+    fun start(scope: CoroutineScope, foreground: StateFlow<Boolean>) {
         scope.launch(Dispatchers.IO) {
             while (true) {
+                foreground.first { it }
                 runCatching { refresh() }
                 delay(30 * 60 * 1000L)
             }
         }
     }
+
+    /** What the carousel was last loaded with; Settings reloads on close only when this changed. */
+    private data class LoadInputs(val selected: Set<String>, val per: Int, val max: Int, val shuffle: Boolean)
+    @Volatile private var loadedWith: LoadInputs? = null
+    private fun inputs() = LoadInputs(selectedKeys.value, settings.perCatalog, settings.maxItems, settings.shuffle)
+    fun needsReload(): Boolean = loadedWith != inputs()
 
     private fun parseCatalogs(url: String, fallbackName: String, manifest: JSONObject): List<CatalogRef> {
         val arr = manifest.optJSONArray("catalogs") ?: JSONArray()
@@ -99,6 +108,7 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
     suspend fun refresh() = loadLock.withLock {
         withContext(Dispatchers.IO) {
             status.value = "Loading catalogs…"
+            loadedWith = inputs()
             val urls = addons.toList()
             val refs = java.util.Collections.synchronizedList(mutableListOf<CatalogRef>())
             val gate = Semaphore(4)

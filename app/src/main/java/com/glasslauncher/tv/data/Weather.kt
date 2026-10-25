@@ -4,6 +4,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import kotlin.math.roundToInt
@@ -44,13 +46,14 @@ data class WeatherNow(val city: String, val tempC: Double, val code: Int, val da
     fun temp(fahrenheit: Boolean) = (if (fahrenheit) tempC * 9 / 5 + 32 else tempC).roundToInt().toString() + "°"
 }
 
-class Weather(private val settings: Settings, private val http: Http, private val scope: CoroutineScope) {
+class Weather(private val settings: Settings, private val http: Http, private val scope: CoroutineScope, private val foreground: StateFlow<Boolean>) {
     val now = MutableStateFlow<WeatherNow?>(null)
     private var place: Triple<String, Double, Double>? = null
 
     fun start() {
         scope.launch(Dispatchers.IO) {
             while (true) {
+                foreground.first { it }
                 if (settings.weatherMode != "off") runCatching { refresh() }
                 delay(15 * 60_000L)
             }

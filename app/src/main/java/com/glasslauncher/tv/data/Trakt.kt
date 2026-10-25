@@ -87,6 +87,8 @@ private class TokenVault(ctx: Context) {
  */
 class Trakt(ctx: Context, private val scope: CoroutineScope) {
     sealed interface State {
+        /** App start: the stored sign-in is being read (Keystore decrypt, off the main thread). */
+        data object Checking : State
         data object NotConfigured : State
         data object SignedOut : State
         /** Sign-in pressed, waiting for Trakt's code. */
@@ -105,20 +107,29 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
     /** Called after a successful sign-in (Continue Watching loads right away). */
     var onSignedIn: () -> Unit = {}
 
-    val state = MutableStateFlow<State>(
-        when {
-            !configured -> State.NotConfigured
-            vault.load() != null -> State.SignedIn
-            vault.needsSignIn -> State.Failed(SIGN_IN_AGAIN)
-            else -> State.SignedOut
-        }
-    )
+    val state = MutableStateFlow<State>(if (configured) State.Checking else State.NotConfigured)
     val signedIn: Boolean get() = state.value == State.SignedIn
     /** Empty until known; signed-in users from before 1.9.3-d5 get it loaded at start. */
-    val username = MutableStateFlow(vault.username)
+    val username = MutableStateFlow("")
+    /** Completes once the stored sign-in has been read; Continue Watching waits for it before its first fetch. */
+    val ready = kotlinx.coroutines.CompletableDeferred<Unit>()
 
     init {
-        if (signedIn && username.value.isBlank()) scope.launch(Dispatchers.IO) { accessToken()?.let { loadUsername(it) } }
+        // The Keystore decrypt and the prefs read happen here, not on the main thread during app start.
+        scope.launch(Dispatchers.IO) {
+            if (configured) {
+                username.value = vault.username
+                val s = when {
+                    vault.load() != null -> State.SignedIn
+                    vault.needsSignIn -> State.Failed(SIGN_IN_AGAIN)
+                    else -> State.SignedOut
+                }
+                // Only if nothing (e.g. a sign-in started meanwhile) changed the state in the meantime.
+                state.compareAndSet(State.Checking, s)
+            }
+            ready.complete(Unit)
+            if (signedIn && username.value.isBlank()) accessToken()?.let { loadUsername(it) }
+        }
     }
 
     /** GET /users/settings on api.trakt.tv → user.username. Best effort: on failure the page just says "Signed in to Trakt". */
@@ -162,7 +173,9 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
         try {
             if (body != null) { c.doOutput = true; c.outputStream.use { it.write(body.toString().toByteArray()) } }
             val code = c.responseCode
-            val text = runCatching { (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } }.getOrNull().orEmpty()
+            // A success body must be read whole (an oversized one fails the call); an error body is best effort.
+            val text = if (code in 200..299) readCapped(c.inputStream, c.contentLengthLong)
+                else runCatching { c.errorStream?.let { readCapped(it, max = 64 * 1024) } }.getOrNull().orEmpty()
             return Reply(code, text)
         } finally { c.disconnect() }
     }
