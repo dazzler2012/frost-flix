@@ -117,7 +117,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
         c.connectTimeout = 10_000; c.readTimeout = 15_000
         c.setRequestProperty("Content-Type", "application/json")
         c.setRequestProperty("Accept", "application/json")
-        c.setRequestProperty("User-Agent", "GlassioD/${BuildConfig.VERSION_NAME}")
+        c.setRequestProperty("User-Agent", "Frost-flix/${BuildConfig.VERSION_NAME}")
         c.setRequestProperty("trakt-api-version", "2")
         c.setRequestProperty("trakt-api-key", clientId)
         if (bearer != null) c.setRequestProperty("Authorization", "Bearer $bearer")

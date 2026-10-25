@@ -189,7 +189,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 Adjust("Artwork", "Which picture each title uses", {
                     when (st.artChoice) { "second" -> "Second picture"; "best" -> "Highest resolution"; "addon" -> "Add-on picture"; else -> "Main (TMDB)" }
                 }, { st.artChoice = cycle(listOf("main", "second", "best", "addon"), st.artChoice, it) }),
-                Note("One title: on the carousel hold OK (or press Menu) to switch to its next picture. Glassio remembers it."),
+                Note("One title: on the carousel hold OK (or press Menu) to switch to its next picture. Frost-flix remembers it."),
                 Act("Reset pictures picked per title", "", "") { st.clearArtPicks(); toast(ctx, "Every title is back to the Artwork setting") },
                 Act("Reload carousel now", "") { io { app.catalogs.refresh(); app.catalogs.status.value } },
             )
@@ -343,7 +343,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 }))
                 add(Toggle("Show clock", "", { st.saverClock }, { st.saverClock = it }))
                 add(Toggle("Back on the home screen starts it", "Like Apple TV: press Back on the home screen", { st.backSaver }, { st.backSaver = it }))
-                add(Act("Add video link", "For Glassio as system screensaver: a direct https .mp4 / .mov link", "") {
+                add(Act("Add video link", "For Frost-flix as system screensaver: a direct https .mp4 / .mov link", "") {
                     dialog = TextEntry("Video link", "", "https://…/video.mp4") { u ->
                         if (u.startsWith("http")) st.aerialUrls = (st.aerialUrls + u.trim()).distinct() else toast(ctx, "The link must start with http")
                     }
@@ -352,13 +352,13 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                     add(Act("Video link", hostOf(u), "Remove") { st.aerialUrls = st.aerialUrls - u })
                 }
                 add(Act("Preview now", "") { ctx.startActivity(Intent(ctx, ScreensaverActivity::class.java)) })
-                add(Act("Use as system screensaver", "Pick Glassio in the list", "") { openSystem(ctx, AndroidSettings.ACTION_DREAM_SETTINGS) })
+                add(Act("Use as system screensaver", "Pick Frost-flix in the list", "") { openSystem(ctx, AndroidSettings.ACTION_DREAM_SETTINGS) })
             }
         },
         Category("System") {
             listOf(
-                Toggle("Home button opens Glassio", "Needs the accessibility service below", { st.interceptHome }, { st.interceptHome = it }),
-                Act("Turn on the accessibility service", "Find Glassio and switch it on", "") { openSystem(ctx, AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS) },
+                Toggle("Home button opens Frost-flix", "Needs the accessibility service below", { st.interceptHome }, { st.interceptHome = it }),
+                Act("Turn on the accessibility service", "Find Frost-flix and switch it on", "") { openSystem(ctx, AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS) },
                 Act("Choose default home app", "", "") { openSystem(ctx, AndroidSettings.ACTION_HOME_SETTINGS) },
             )
         },
@@ -558,7 +558,7 @@ private fun AboutPane(app: GlassApp, s: Float, onApp: (com.glasslauncher.tv.data
             Text("Scan with your phone", color = Color.White.copy(alpha = 0.5f), fontSize = (9 * s).sp)
         }
         val rows = buildList<SRow> {
-            add(Note("Glassio (D) $version · hardened copy of Glassio, no self-updates"))
+            add(Note("Frost-flix $version · based on Glassio by mohammadmrh12 (GPL-3.0), no self-updates"))
             add(Note("Made by Mohammad · Fonts: Inter (SIL OFL) · Weather: Open-Meteo · This product uses the TMDB API but is not endorsed or certified by TMDB."))
             if (crash.isNotBlank()) add(Act("Last crash", crash.take(120), "Clear") { java.io.File(ctx.filesDir, "last-crash.txt").delete(); toast(ctx, "Cleared") })
         }

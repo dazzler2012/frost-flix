@@ -5,7 +5,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 ## Identity
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
-- App label changed from "Glassio" to "Glassio (D)".
+- App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
 - `versionName` changed to `1.9.3-d3`. `versionCode` is 27 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
@@ -37,7 +37,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `MainActivity.handleExtras()` was removed, including `open_settings`, `icon_pack`, `blur`, `saver_mode`, `ha_webhook`, `continue_mode`, `reset_icon`, `open_folder`, `hero_autoplay`, `page_glass`, `focus_color`, `start_saver`, `dump_settings`, `perf_mode`, `refraction`, `art_choice`, `dock_style` and `tile_style`.
 - `GlassApp.requestFolder` was removed (only those extras set it).
-- The HOME / LAUNCHER / LEANBACK_LAUNCHER intent filters are unchanged. Pressing Home while Glassio is in front still returns to the first slide.
+- The HOME / LAUNCHER / LEANBACK_LAUNCHER intent filters are unchanged. Pressing Home while Frost-flix is in front still returns to the first slide.
 
 ## Removed: "Manage from phone"
 
@@ -60,7 +60,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 ## Removed: Apple aerial videos
 
 - The in-app screensaver ("Type: Apple aerial videos") was removed, along with the "Apple aerial videos" toggle and the `sylvan.apple.com` feed in `saver/AerialSource.kt`.
-- The screensaver started by Glassio ("Start after", "Back starts it", "Preview now") now always shows the poster slideshow. The settings `saverMode` and `useAppleAerials` were removed, and the "Type" row is gone.
+- The screensaver started by Frost-flix ("Start after", "Back starts it", "Preview now") now always shows the poster slideshow. The settings `saverMode` and `useAppleAerials` were removed, and the "Type" row is gone.
 - Kept: your own video links ("Add video link"). Only the system screensaver service (`GlassDreamService`, "Use as system screensaver") plays them.
 
 ## Removed: seed.json import
@@ -89,7 +89,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - Carousel titles now also open in NuvioTV, using its `nuvio://meta?type=…&id=…` link.
 - "Open titles in" has a new default, "Automatic": NuvioTV first, then Nuvio Legacy, then Nuvio Re-Shaped, whichever is installed. A fixed choice that is not installed falls back to the same order.
-- If the installed Nuvio refuses the title link, Glassio opens the Nuvio app instead.
+- If the installed Nuvio refuses the title link, Frost-flix opens the Nuvio app instead.
 - `com.nuvio.tv` was added to `<queries>` in the manifest and to the preferred apps list.
 
 ## Added: Continue Watching from Trakt (1.9.3-d3)
@@ -104,9 +104,16 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 - **Artwork:** from the meta resource of your own add-ons (Cinemeta is skipped), then TMDB when a token is set. The Cinemeta lookups are not back.
 - **Play:** opens the title in Nuvio with the existing launch code (NuvioTV first).
 - **Network:** the only new host is `https://api.trakt.tv`.
-- **Redirect URI:** the token refresh sends `redirect_uri`, from `BuildConfig.TRAKT_REDIRECT_URI` (default `http://localhost`, override with `TRAKT_REDIRECT_URI` at build time). It is only sent as text to Trakt; Glassio never connects to it.
+- **Redirect URI:** the token refresh sends `redirect_uri`, from `BuildConfig.TRAKT_REDIRECT_URI` (default `http://localhost`, override with `TRAKT_REDIRECT_URI` at build time). It is only sent as text to Trakt; Frost-flix never connects to it.
 - **Build:** the Client ID comes from the GitHub Actions secret `TRAKT_CLIENT_ID` and goes into `BuildConfig` at build time. It is not in the repo. Without it the page shows "Trakt not configured".
 - **Still removed:** "Open on what I just watched", the Nuvio Legacy log toggle, the pinned-image cache and the settings `continueJump` and `cwLegacy`.
+
+## Renamed to Frost-flix
+
+- The visible name is now "Frost-flix": app label, launcher name, accessibility service and its description, the empty-carousel title, Settings and About texts.
+- About still credits Glassio by mohammadmrh12 and links to the original repository. So do README.md and CREDITS.md.
+- Releases are titled "Frost-flix v…" and the APK is `frost-flix.apk` (was `glassio-d.apk`). The CI artifact is `frost-flix-unsigned`.
+- Unchanged on purpose: the `applicationId` `tv.darren.glassio`, the Kotlin package `com.glasslauncher.tv`, the Keystore alias of the Trakt tokens, and the signing key file and alias. The update installs over the existing app and keeps its settings and Trakt sign-in.
 
 ## Not changed
 

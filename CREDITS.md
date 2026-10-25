@@ -13,4 +13,4 @@ Third-party parts, as credited by upstream:
 - Weather: Open-Meteo.
 - This product uses the TMDB API but is not endorsed or certified by TMDB.
 
-Glassio (D) is an independent copy. It is not made or supported by the original author. Report problems with this copy here, not upstream.
+Frost-flix (formerly "Glassio (D)") is an independent copy of Glassio. It is not made or supported by the original author. Report problems with this copy here, not upstream.

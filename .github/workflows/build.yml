@@ -30,7 +30,7 @@ jobs:
           ./gradlew --no-daemon assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: glassio-d-unsigned
+          name: frost-flix-unsigned
           path: app/build/outputs/apk/release/*.apk
           retention-days: 14
 
@@ -90,13 +90,13 @@ jobs:
             echo "::error title=No signed APK::$apk was not produced. Check the build log above."
             exit 1
           fi
-          cp "$apk" glassio-d.apk
+          cp "$apk" frost-flix.apk
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" glassio-d.apk \
-            --repo "$GITHUB_REPOSITORY" --title "Glassio (D) $GITHUB_REF_NAME" --generate-notes
+          gh release create "$GITHUB_REF_NAME" frost-flix.apk \
+            --repo "$GITHUB_REPOSITORY" --title "Frost-flix $GITHUB_REF_NAME" --generate-notes
       - name: Remove keystore
         if: always()
         run: rm -f "$RUNNER_TEMP/release.jks"

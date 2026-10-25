@@ -12,6 +12,7 @@ keytool -genkeypair -v -keystore glassio-d.jks -storetype PKCS12 -keyalg RSA -ke
 
 - It asks for a password, then your name and similar details (any values are fine).
 - With the PKCS12 format the key password is the same as the keystore password. Use that one password for both secrets below.
+- The file name `glassio-d.jks` and the alias `glassio-d` are left from the old name. Keep them: the release workflow and your existing secrets use them, and the APK must keep the same signing key to install over the app you already have.
 - Back up `glassio-d.jks` and the password somewhere safe. If you lose them you can't ship updates that install over the existing app; you would have to uninstall it first.
 - Never commit the `.jks` file. `.gitignore` blocks `*.jks` and `*.keystore`.
 
@@ -42,8 +43,8 @@ Add one more secret:
 |---|---|
 | `TRAKT_CLIENT_ID` | the **Client ID** of your Trakt app |
 
-- Get it from your app in the Trakt developer portal. Only the Client ID is needed. Glassio never uses a Client Secret.
-- Glassio sends a redirect URI when it renews the sign-in. The default is `http://localhost`. The redirect URI registered in your Trakt app must match it **exactly** (same scheme, no trailing slash, no port). Otherwise renewing fails and you have to sign in again every 7 days.
+- Get it from your app in the Trakt developer portal. Only the Client ID is needed. Frost-flix never uses a Client Secret.
+- Frost-flix sends a redirect URI when it renews the sign-in. The default is `http://localhost`. The redirect URI registered in your Trakt app must match it **exactly** (same scheme, no trailing slash, no port). Otherwise renewing fails and you have to sign in again every 7 days.
 - To use a different redirect URI, add a repository secret or variable named `TRAKT_REDIRECT_URI` with the exact value. No code change is needed.
 - The ID is put into the APK at build time. It is never stored in this repository.
 - If the secret is missing, the build still works. The app then shows "Trakt not configured" on the Continue Watching page.
@@ -60,7 +61,7 @@ git tag v1.9.3-d1
 git push origin v1.9.3-d1
 ```
 
-The **Build** workflow (Actions tab) then builds and signs the APK and creates a GitHub release with `glassio-d.apk` attached.
+The **Build** workflow (Actions tab) then builds and signs the APK and creates a GitHub release named "Frost-flix v…" with `frost-flix.apk` attached.
 
 For later versions, raise `versionCode` and `versionName` in `app/build.gradle.kts` first. Android refuses an update whose `versionCode` isn't higher than the one installed.
 
@@ -70,7 +71,9 @@ For later versions, raise `versionCode` and `versionName` in `app/build.gradle.k
 2. Allow Downloader to install apps. On Android TV 11 this is usually under **Settings → Device Preferences → Security & restrictions → Unknown sources**. The exact menu names may differ on your firmware.
 3. In Downloader, type this URL. It always points to the newest release:
 
-   `https://github.com/dazzler2012/frost-flix/releases/latest/download/glassio-d.apk`
+   `https://github.com/dazzler2012/frost-flix/releases/latest/download/frost-flix.apk`
+
+   Releases made before the rename (v1.9.3-d1 and v1.9.3-d2) only have `glassio-d.apk`. The new link works once a release with `frost-flix.apk` exists.
 
 4. Choose **Install** when Downloader asks. Then delete the downloaded file when Downloader offers to.
 
@@ -79,7 +82,7 @@ To update later, repeat step 3 after publishing a new tag.
 ## 5. First-run settings on the TV
 
 - **Make it the home app:** Settings → System → Choose default home app.
-- **Home button:** Settings → System → turn on "Home button opens Glassio", then switch on the Glassio (D) accessibility service in the Android TV accessibility settings. Android turns that service off after every update of a sideloaded app, so turn it on again after updating.
+- **Home button:** Settings → System → turn on "Home button opens Frost-flix", then switch on the Frost-flix accessibility service in the Android TV accessibility settings. Android turns that service off after every update of a sideloaded app, so turn it on again after updating.
 - **Weather:** Settings → Clock & glass → Weather → Off.
 - **Continue Watching:** Settings → Continue Watching → Sign in to Trakt. Open the address shown on your phone and type the code. The list comes from what NuvioTV scrobbles to Trakt, so turn on Trakt in NuvioTV too.
 - **Catalogs:** Settings → Catalogs → Add add-on link. Type the manifest URL with the remote. Only `https://` links work, because cleartext HTTP is blocked (except 127.0.0.1, which Connect to Nuvio uses).

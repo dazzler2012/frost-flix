@@ -4,7 +4,7 @@ labels: [bug]
 body:
   - type: input
     id: version
-    attributes: { label: Glassio version, description: Settings → About, placeholder: "1.8.0" }
+    attributes: { label: Frost-flix version, description: Settings → About, placeholder: "1.8.0" }
     validations: { required: true }
   - type: input
     id: device

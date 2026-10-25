@@ -1,10 +1,10 @@
-# Glassio (D)
+# Frost-flix
 
-A hardened, standalone copy of [Glassio](https://github.com/mohammadmrh12/glassio), an Android TV home screen with a liquid-glass look, made by mohammadmrh12. This copy is based on Glassio **v1.9.3**.
+Frost-flix is a hardened, standalone copy of [Glassio](https://github.com/mohammadmrh12/glassio), an Android TV home screen with a liquid-glass look, made by mohammadmrh12. This copy is based on Glassio **v1.9.3**.
 
 - Package name: `tv.darren.glassio` (installs alongside the original, never over it)
-- App label: **Glassio (D)**
-- Version: 1.9.3-d1
+- App label: **Frost-flix** (called "Glassio (D)" up to 1.9.3-d3; the package name stayed the same, so updates install over it)
+- Version: 1.9.3-d3
 
 ## What is different
 
