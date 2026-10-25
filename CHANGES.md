@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d8`. `versionCode` is 32 (upstream 25).
+- `versionName` changed to `1.9.3-d9`. `versionCode` is 33 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -190,6 +190,15 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 - **RGB_565 for opaque icons:** an icon with no see-through pixel is kept as RGB_565 (dithered; half the memory). Icons with transparency stay ARGB_8888.
 - **Darkened copy only when needed:** a transparent icon's darkened copy (for light plates) is kept only if darkening changed a pixel; otherwise both looks use the same bitmap.
 - **Icon cache:** capped at 24 MB (was 48 MB), counted by the bitmaps' real size.
-- **Freed native memory given back:** about 2 s after going to the background, after the GC, Frost-flix calls `mallopt(M_PURGE)` (Android 9+) through a tiny JNI library, `libheappurge` (one C function, `app/src/main/cpp`). The allocator then returns the pages of freed memory to the system. The build now uses the NDK and CMake that AGP picks.
+- **Freed native memory given back (removed again in 1.9.3-d9):** about 2 s after going to the background, after the GC, Frost-flix calls `mallopt(M_PURGE)` (Android 9+) through a tiny JNI library, `libheappurge` (one C function, `app/src/main/cpp`). The allocator then returns the pages of freed memory to the system. The build now uses the NDK and CMake that AGP picks.
 - **Memory line:** the background line now ends with the purge result, e.g. "M_PURGE (done, Scudo): PSS … → … MB, heap … → … MB". "done" means the allocator accepted it; the allocator name is read from the process's memory map names.
 - **Baked backdrops stay software bitmaps (not hardware):** the half-size copy the clear glass samples is made from the baked backdrop on the CPU, which a hardware bitmap doesn't allow without a GPU read-back. On the Shield the GPU uses the same RAM, so a hardware bitmap would mostly move the bytes from the native heap to "Graphics" in PSS. And in the background no backdrop exists any more (since 1.9.3-d7), so it would not lower that number.
+
+## GPU memory in the background (1.9.3-d9)
+
+- **Finding:** the d8 diff adds no GPU allocation. No HardwareRenderer, RenderNode, ImageReader, Surface, Picture, hardware Canvas, `Bitmap.Config.HARDWARE`, ImageDecoder, offscreen layer, RenderEffect or AGSL shader was added; the icon scaling was already done on the CPU. The "Other mtrack" memory is the render thread's GPU cache (textures of pictures drawn while Frost-flix was in front). In the Android 11 source, a stopped window keeps the textures it used in the last 30 s, and TRIM_MEMORY_UI_HIDDEN only cuts the cache to half its limit. The limit is 48 bytes per pixel of the display mode, so that half is about 199 MB at 4K. Nothing purges it later while no frame is drawn.
+- **GPU cache released in the background:** 35 s after Frost-flix goes to the background, it creates an Android `HardwareRenderer` that never draws and destroys it at once. Destroying a renderer purges every cached GPU resource not used in the last 30 s (Android 10+; `HardwareRenderer` is public API). The textures are uploaded again when the home screen is drawn again.
+- **No hardware bitmaps:** Coil's image loader now decodes every picture into a software bitmap (`allowHardware(false)` for all requests, was only for 1920 px backdrops). Logos and posters drawn by `AsyncImage` were hardware bitmaps (GPU buffers) before.
+- **Icons scaled on the CPU only:** the halving steps draw into new software ARGB_8888 bitmaps with a filtering Paint (same result as `createScaledBitmap` with filtering). A drawable holding a hardware bitmap is copied to software before it is drawn. Icon sizes, RGB_565 and sharpness are unchanged.
+- **M_PURGE removed:** it freed 0.1 MB on the Shield. `libheappurge`, `NativeHeap.kt`, `app/src/main/cpp` and the CMake/NDK build are gone; the build no longer needs the NDK.
+- **Memory line:** the background line now also shows "GPU: graphics … MB, private other … MB, total PSS … MB" from `Debug.getMemoryInfo` (the same summary as dumpsys meminfo; "private other" includes "Other mtrack"; this total PSS includes GPU memory, the plain "PSS" figure does not). About 36 s after leaving it adds the same numbers after the GPU cache release, or "GPU cache release: not available".

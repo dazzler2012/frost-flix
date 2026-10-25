@@ -11,8 +11,8 @@ android {
         applicationId = "tv.darren.glassio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 32
-        versionName = "1.9.3-d8"
+        versionCode = 33
+        versionName = "1.9.3-d9"
         // Trakt client ID: from the environment (GitHub Actions secret TRAKT_CLIENT_ID), never from the repo.
         // Empty in a local build without it; the app then shows "Trakt not configured".
         // Only leading/trailing whitespace and newlines are removed; every other character is kept (Trakt IDs can contain - and _).
@@ -48,8 +48,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     buildFeatures { compose = true; buildConfig = true }
-    // libheappurge: one C function, mallopt(M_PURGE), see NativeHeap.kt. Built with the NDK version AGP picks.
-    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 

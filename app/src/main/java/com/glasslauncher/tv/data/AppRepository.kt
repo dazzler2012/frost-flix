@@ -318,26 +318,40 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
         return if (k == 1) b else shrink(b, tw, th).also { if (it !== b) b.recycle() }
     }
 
-    /** Scales [src] down to [tw]×[th] in halving steps (each one an even 2×2 average), then one last step. */
+    /**
+     * Scales [src] down to [tw]×[th] in halving steps (each one an even 2×2 average), then one last step.
+     * All on the CPU: software bitmaps and a software Canvas, nothing touches the GPU.
+     */
     private fun shrink(src: Bitmap, tw: Int, th: Int): Bitmap {
         var b = src
         while (b.width / 2 >= tw && b.height / 2 >= th) {
-            val n = Bitmap.createScaledBitmap(b, b.width / 2, b.height / 2, true)
-            if (n !== b && b !== src) b.recycle()
+            val n = scaled(b, b.width / 2, b.height / 2)
+            if (b !== src) b.recycle()
             b = n
         }
         if (b.width != tw || b.height != th) {
-            val n = Bitmap.createScaledBitmap(b, tw, th, true)
-            if (n !== b && b !== src) b.recycle()
+            val n = scaled(b, tw, th)
+            if (b !== src) b.recycle()
             b = n
         }
         return b
     }
 
+    /** Bilinear scale into a new software ARGB_8888 bitmap (what createScaledBitmap with filtering does). */
+    private fun scaled(src: Bitmap, w: Int, h: Int): Bitmap {
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        Canvas(out).drawBitmap(src, null, android.graphics.Rect(0, 0, w, h), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+        return out
+    }
+
     private fun Drawable.toBitmap(w: Int, h: Int): Bitmap {
+        // A software Canvas can't draw a hardware bitmap: give such a drawable a software copy first.
+        val hw = (this as? android.graphics.drawable.BitmapDrawable)?.bitmap
+            ?.takeIf { it.config == Bitmap.Config.HARDWARE }
+        val d = hw?.let { android.graphics.drawable.BitmapDrawable(ctx.resources, it.copy(Bitmap.Config.ARGB_8888, false)) } ?: this
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
-        setBounds(0, 0, w, h); draw(c)
+        d.setBounds(0, 0, w, h); d.draw(c)
         return bmp
     }
 }

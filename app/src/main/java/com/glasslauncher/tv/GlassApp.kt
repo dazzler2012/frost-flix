@@ -18,14 +18,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import coil3.request.allowHardware
 
 class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
     /**
      * Image caches sized for TV boxes that also have to play video: 15% of the app's memory class for
      * decoded pictures, 256 MB on disk (small boxes such as the Shield have little free storage).
+     * Every picture is decoded into a software bitmap, never Bitmap.Config.HARDWARE: a hardware bitmap is a
+     * GPU buffer, and its texture can stay in the render thread's cache after the bitmap is gone.
      */
     override fun newImageLoader(context: coil3.PlatformContext): coil3.ImageLoader =
         coil3.ImageLoader.Builder(context)
+            .allowHardware(false)
             .memoryCache { coil3.memory.MemoryCache.Builder().maxSizePercent(context, 0.15).build() }
             .diskCache {
                 coil3.disk.DiskCache.Builder()
@@ -55,13 +59,18 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
     /** The carousel slide on screen, kept across MainActivity's stop/start rebuild (a number, no picture). */
     @Volatile var heroIndex = 0
 
-    /** The Memory line as measured ~5 s after Frost-flix went to the background (see [onBackground]). */
+    /**
+     * The Memory line as measured ~5 s after Frost-flix went to the background, then the GPU numbers before and
+     * after the GPU cache was released (~35 s) (see [onBackground]).
+     */
     @Volatile var lastBackground = ""
     private var backgroundJob: kotlinx.coroutines.Job? = null
 
     /**
      * Everything is unreferenced by now (MainActivity dropped its screen); release the app caches, then
      * collect, so the pixels are really freed while another app plays. Then note the numbers for Settings.
+     * Last, release the GPU textures the render thread still caches ([MemoryStats.releaseGpu]): it only frees
+     * what was not used for 30 s, so it waits until 35 s after the screen went away.
      */
     private fun onBackground() {
         backgroundJob?.cancel()
@@ -70,15 +79,20 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
             // Give the render thread a moment to let go of the last frame's bitmaps.
             kotlinx.coroutines.delay(1500)
             MemoryStats.collect()
-            // The collected bitmaps' pixels are freed right after the GC; then the allocator still holds
-            // their pages. Hand them back to the system (mallopt M_PURGE).
-            kotlinx.coroutines.delay(500)
+            kotlinx.coroutines.delay(3500)
             if (_foreground.value) return@launch
-            val purge = MemoryStats.purge()
-            kotlinx.coroutines.delay(3000)
+            val fmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+            val before = MemoryStats.gpu()
+            lastBackground = "In the background at ${fmt.format(java.util.Date())}: " + MemoryStats.read(this@GlassApp, pss = true) + " · GPU: $before"
+            kotlinx.coroutines.delay(30_000)
             if (_foreground.value) return@launch
-            val at = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-            lastBackground = "In the background at $at: " + MemoryStats.read(this@GlassApp, pss = true) + " · $purge"
+            val released = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                !_foreground.value && MemoryStats.releaseGpu()
+            }
+            if (!released) { lastBackground += " · GPU cache release: not available"; return@launch }
+            kotlinx.coroutines.delay(1000)
+            if (_foreground.value) return@launch
+            lastBackground += " · GPU cache released at ${fmt.format(java.util.Date())}, then: ${MemoryStats.gpu()}"
         }
     }
 

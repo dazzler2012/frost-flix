@@ -46,14 +46,27 @@ object MemoryStats {
     }
 
     /**
-     * Returns the native heap's free pages to the system ([NativeHeap.purge]) and describes the result with
-     * the PSS and native heap size before and after. Reads /proc twice: call off the main thread.
+     * The dumpsys meminfo summary from Debug.getMemoryInfo, which also asks the memtrack HAL for the process's
+     * GPU memory: "graphics" (EGL + GL mtrack), "private other" (holds "Other mtrack", the GPU driver's
+     * textures and buffers on the Shield) and total PSS including both. Debug.getPss() leaves memtrack out.
+     * Reads /proc and the HAL (~100-300 ms): call off the main thread.
      */
-    fun purge(): String {
-        val pss0 = Debug.getPss() * 1024; val heap0 = Debug.getNativeHeapSize()
-        val r = NativeHeap.purge()
-        val pss1 = Debug.getPss() * 1024; val heap1 = Debug.getNativeHeapSize()
-        val result = when (r) { 1 -> "done"; 0 -> "not supported"; else -> "not available" }
-        return "M_PURGE ($result, ${NativeHeap.allocator}): PSS ${mb(pss0)} → ${mb(pss1)} MB, heap ${mb(heap0)} → ${mb(heap1)} MB"
+    fun gpu(): String {
+        val mi = Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }
+        fun kb(key: String) = mi.getMemoryStat(key)?.toLongOrNull()?.let { mb(it * 1024) } ?: "?"
+        return "graphics ${kb("summary.graphics")} MB, private other ${kb("summary.private-other")} MB, total PSS ${kb("summary.total-pss")} MB"
+    }
+
+    /**
+     * Frees the GPU memory the render thread still caches for us. When a window stops, Android's renderer keeps
+     * textures used in the last 30 s, and TRIM_MEMORY_UI_HIDDEN only cuts its cache to half its limit (the limit
+     * is 48 bytes per pixel of the display mode: ~199 MB of that half at 4K). Destroying a renderer purges every
+     * cached resource not used in the last 30 s (CanvasContext::destroy → trimStaleResources, in the
+     * Android 11 source). The renderer made here never draws; it only shares the render thread's GPU context.
+     * Call on the main thread, more than 30 s after the screen was last drawn. Android 10+ (HardwareRenderer).
+     */
+    fun releaseGpu(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < 29) return false
+        return runCatching { android.graphics.HardwareRenderer().destroy() }.isSuccess
     }
 }

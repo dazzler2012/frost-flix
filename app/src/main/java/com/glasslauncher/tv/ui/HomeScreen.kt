@@ -101,7 +101,6 @@ import androidx.compose.ui.zIndex
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
-import coil3.request.allowHardware
 import coil3.request.SuccessResult
 import coil3.toBitmap
 import com.glasslauncher.tv.GlassApp
@@ -123,11 +122,9 @@ const val CATALOGS_CATEGORY = 4
 private const val FOLDER = "__apps_folder__"
 
 private fun imgReq(ctx: android.content.Context, data: Any?, w: Int = 1920, h: Int = 1080) =
-    ImageRequest.Builder(ctx).data(data).size(w, h)
-        // Backdrops are baked into a new bitmap on the CPU (bakeBackdrop): decode them in software, a
-        // hardware bitmap would have to be read back from the GPU first, which stalls the render thread.
-        .apply { if (w == 1920) allowHardware(false) }
-        .build()
+    // Decoded in software (the image loader never makes hardware bitmaps, see GlassApp): backdrops are baked
+    // into a new bitmap on the CPU (bakeBackdrop).
+    ImageRequest.Builder(ctx).data(data).size(w, h).build()
 
 private fun Modifier.clipR(r: Dp): Modifier = this.clip(RoundedCornerShape(r))
 
