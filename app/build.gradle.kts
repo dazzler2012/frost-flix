@@ -11,11 +11,11 @@ android {
         applicationId = "tv.darren.glassio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 27
-        versionName = "1.9.3-d3"
+        versionCode = 28
+        versionName = "1.9.3-d4"
         // Trakt client ID: from the environment (GitHub Actions secret TRAKT_CLIENT_ID), never from the repo.
         // Empty in a local build without it; the app then shows "Trakt not configured".
-        val traktClientId = (System.getenv("TRAKT_CLIENT_ID") ?: "").trim().filter { it.isLetterOrDigit() }
+        val traktClientId = (System.getenv("TRAKT_CLIENT_ID") ?: "").trim().filter { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' }
         buildConfigField("String", "TRAKT_CLIENT_ID", "\"$traktClientId\"")
         // Must match the redirect URI registered in the Trakt app exactly. Override with env TRAKT_REDIRECT_URI.
         val traktRedirect = (System.getenv("TRAKT_REDIRECT_URI") ?: "").trim().filterNot { it == '"' || it == '\\' || it.isWhitespace() }

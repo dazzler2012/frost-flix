@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d3`. `versionCode` is 27 (upstream 25).
+- `versionName` changed to `1.9.3-d4`. `versionCode` is 28 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -103,10 +103,18 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 - **Carousel:** the Continue Watching slides and settings page are restored: "At the start" / "Mixed with catalogs" / "Off", "Slides at the start", and "Progress bar" with the "Continue · S1 · E3 · 42%" label. A next episode shows as "Up next · S1 · E4".
 - **Artwork:** from the meta resource of your own add-ons (Cinemeta is skipped), then TMDB when a token is set. The Cinemeta lookups are not back.
 - **Play:** opens the title in Nuvio with the existing launch code (NuvioTV first).
-- **Network:** the only new host is `https://api.trakt.tv`.
+- **Network:** the only new hosts are `https://api.trakt.tv` (data) and `https://auth.trakt.tv` (sign-in, token refresh, revoke; since 1.9.3-d4).
 - **Redirect URI:** the token refresh sends `redirect_uri`, from `BuildConfig.TRAKT_REDIRECT_URI` (default `http://localhost`, override with `TRAKT_REDIRECT_URI` at build time). It is only sent as text to Trakt; Frost-flix never connects to it.
 - **Build:** the Client ID comes from the GitHub Actions secret `TRAKT_CLIENT_ID` and goes into `BuildConfig` at build time. It is not in the repo. Without it the page shows "Trakt not configured".
 - **Still removed:** "Open on what I just watched", the Nuvio Legacy log toggle, the pinned-image cache and the settings `continueJump` and `cwLegacy`.
+
+## Fixed: Trakt sign-in (1.9.3-d4)
+
+- All `/oauth/*` requests (device code, device token, token refresh, revoke) now go to `https://auth.trakt.tv`, as Trakt's openapi.json requires. Data requests stay on `https://api.trakt.tv`.
+- The address shown on the TV is the `verification_url` Trakt returns. There is no built-in fallback address any more.
+- A failed sign-in shows the step (1 = get code, 2 = get token), the HTTP status and Trakt's `error` / `error_description`. The Client ID, device code and tokens are never shown or logged.
+- Polling now stops on any unexpected 4xx answer instead of waiting silently until the code expires. 5xx answers are retried at the next interval.
+- The build keeps only ASCII letters and digits of `TRAKT_CLIENT_ID`. CI runs `tools/trakt_ci_check.sh`: it prints the ID's length and first and last 4 characters and whether Trakt accepts it (warning only, never the full value).
 
 ## Renamed to Frost-flix
 

@@ -47,6 +47,7 @@ Add one more secret:
 - Frost-flix sends a redirect URI when it renews the sign-in. The default is `http://localhost`. The redirect URI registered in your Trakt app must match it **exactly** (same scheme, no trailing slash, no port). Otherwise renewing fails and you have to sign in again every 7 days.
 - To use a different redirect URI, add a repository secret or variable named `TRAKT_REDIRECT_URI` with the exact value. No code change is needed.
 - The ID is put into the APK at build time. It is never stored in this repository.
+- Each CI build runs "Check Trakt client ID". It prints the length and the first and last 4 characters of the secret (never the full value) and warns if Trakt rejects it. Compare those with the Client ID in your Trakt app.
 - If the secret is missing, the build still works. The app then shows "Trakt not configured" on the Continue Watching page.
 - For a local build, set the environment variable `TRAKT_CLIENT_ID` (and `TRAKT_REDIRECT_URI` if it isn't `http://localhost`) before running Gradle. Don't write it into any file in the repo.
 

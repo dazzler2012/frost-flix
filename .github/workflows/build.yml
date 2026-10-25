@@ -21,6 +21,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Check Trakt client ID
+        env:
+          TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+        run: bash tools/trakt_ci_check.sh
       - name: Build (unsigned)
         env:
           TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
@@ -72,6 +76,10 @@ jobs:
             echo "::error title=Bad keystore::KEYSTORE_BASE64 did not decode to a file. Re-create it as described in SETUP.md."
             exit 1
           fi
+      - name: Check Trakt client ID
+        env:
+          TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+        run: bash tools/trakt_ci_check.sh
       - name: Build (signed)
         env:
           SIGNING_STORE_FILE: ${{ runner.temp }}/release.jks

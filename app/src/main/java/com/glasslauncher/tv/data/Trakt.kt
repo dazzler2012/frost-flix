@@ -107,12 +107,14 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
     )
     val signedIn: Boolean get() = state.value == State.SignedIn
 
-    // ---- HTTP (api.trakt.tv only, HTTPS only, never cached, never logged)
+    // ---- HTTP (api.trakt.tv, and auth.trakt.tv for /oauth/*; HTTPS only, never cached, never logged)
 
     private class Reply(val code: Int, val body: String)
 
     private fun call(method: String, path: String, body: JSONObject? = null, bearer: String? = null): Reply {
-        val c = URL(API + path).openConnection() as HttpsURLConnection
+        // Trakt's openapi.json: every /oauth/* request (device code, device token, token refresh, revoke) goes to auth.trakt.tv.
+        val host = if (path.startsWith("/oauth/")) AUTH else API
+        val c = URL(host + path).openConnection() as HttpsURLConnection
         c.requestMethod = method
         c.connectTimeout = 10_000; c.readTimeout = 15_000
         c.setRequestProperty("Content-Type", "application/json")
@@ -127,6 +129,21 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
             val text = runCatching { (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } }.getOrNull().orEmpty()
             return Reply(code, text)
         } finally { c.disconnect() }
+    }
+
+    /**
+     * "HTTP 401 · invalid_client: client not found" for the sign-in page. Only Trakt's error fields are shown,
+     * never the raw body, so the client ID, device code and tokens can't appear on screen.
+     */
+    private fun describe(r: Reply): String {
+        val o = runCatching { JSONObject(r.body) }.getOrNull()
+        val err = o?.optString("error").orEmpty().take(60)
+        val desc = o?.optString("error_description").orEmpty().take(160)
+        val text = listOf(err, desc).filter { it.isNotBlank() }.joinToString(": ")
+            .ifBlank { if (r.body.isBlank()) "no error text" else "no JSON error text" }
+            .let { if (clientId.isNotEmpty()) it.replace(clientId, "***") else it }
+        val hint = if (r.code == 401 && err == "invalid_client") " (Trakt doesn't know this build's Client ID; check the TRAKT_CLIENT_ID secret)" else ""
+        return "HTTP ${r.code} · $text$hint"
     }
 
     private fun parseTokens(body: String): TraktTokens? = runCatching {
@@ -153,16 +170,22 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
     }
 
     private suspend fun deviceFlow() {
-        val start = runCatching { call("POST", "/oauth/device/code", JSONObject().put("client_id", clientId)) }.getOrNull()
-        if (start == null || start.code != 200) {
-            state.value = State.Failed(if (start == null) "Trakt can't be reached" else "Trakt sign-in failed (HTTP ${start.code})")
+        val start = runCatching { call("POST", "/oauth/device/code", JSONObject().put("client_id", clientId)) }
+        val s = start.getOrNull()
+        if (s == null || s.code != 200) {
+            state.value = State.Failed(STEP_CODE + (if (s == null) "can't reach auth.trakt.tv (${start.exceptionOrNull()?.javaClass?.simpleName})" else describe(s)))
             return
         }
-        val o = runCatching { JSONObject(start.body) }.getOrNull() ?: run { state.value = State.Failed("Trakt sent an unexpected reply"); return }
+        val o = runCatching { JSONObject(s.body) }.getOrNull() ?: run { state.value = State.Failed(STEP_CODE + "HTTP 200 · reply is not JSON"); return }
         val device = o.optString("device_code")
+        val userCode = o.optString("user_code")
+        val url = o.optString("verification_url")
+        if (device.isBlank() || userCode.isBlank() || url.isBlank()) {
+            state.value = State.Failed(STEP_CODE + "HTTP 200 · reply is missing device_code, user_code or verification_url"); return
+        }
         val deadline = System.currentTimeMillis() + o.optLong("expires_in", 600) * 1000
         var interval = o.optLong("interval", 5).coerceAtLeast(1)
-        state.value = State.Waiting(o.optString("user_code"), o.optString("verification_url").ifBlank { "https://trakt.tv/activate" }, deadline)
+        state.value = State.Waiting(userCode, url, deadline)
         while (System.currentTimeMillis() + interval * 1000 < deadline) {
             delay(interval * 1000)
             val r = runCatching { call("POST", "/oauth/device/token", JSONObject().put("code", device).put("client_id", clientId)) }.getOrNull()
@@ -178,13 +201,15 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
                 }
                 400 -> Unit // still waiting for the user
                 429 -> interval += 5 // "slow down"
-                404 -> { state.value = State.Failed("Trakt didn't recognise the code. Try again."); return }
-                409 -> { state.value = State.Failed("That code was already used. Try again."); return }
-                410 -> { state.value = State.Failed("The code expired. Try again."); return }
-                418 -> { state.value = State.Failed("Sign-in was declined on Trakt."); return }
+                404 -> { state.value = State.Failed(STEP_TOKEN + "HTTP 404 · Trakt didn't recognise the code. Try again."); return }
+                409 -> { state.value = State.Failed(STEP_TOKEN + "HTTP 409 · That code was already used. Try again."); return }
+                410 -> { state.value = State.Failed(STEP_TOKEN + "HTTP 410 · The code expired. Try again."); return }
+                418 -> { state.value = State.Failed(STEP_TOKEN + "HTTP 418 · Sign-in was declined on Trakt."); return }
+                in 500..599 -> Unit // Trakt hiccup: try again at the next interval
+                else -> { state.value = State.Failed(STEP_TOKEN + describe(r)); return }
             }
         }
-        state.value = State.Failed("The code expired. Try again.")
+        state.value = State.Failed(STEP_TOKEN + "the code expired before it was entered. Try again.")
     }
 
     // ---- Tokens
@@ -242,6 +267,9 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
 
     companion object {
         private const val API = "https://api.trakt.tv"
+        private const val AUTH = "https://auth.trakt.tv"
+        private const val STEP_CODE = "Step 1 of 2 (get code) failed: "
+        private const val STEP_TOKEN = "Step 2 of 2 (get token) failed: "
         private const val REFRESH_EARLY_MS = 24L * 3600 * 1000
         const val SIGN_IN_AGAIN = "Trakt sign-in expired. Sign in again."
     }
