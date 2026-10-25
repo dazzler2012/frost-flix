@@ -44,9 +44,15 @@ class ContinueWatching(
     val entries = MutableStateFlow(load())
     val items = MutableStateFlow<List<HeroItem>>(emptyList())
     val lastFetch = MutableStateFlow(sp.getLong("fetchedAt", 0L))
+    /** Why the last update failed, for Settings → Continue Watching; empty after a successful update. */
+    val lastError = MutableStateFlow("")
+    /** Failed updates in a row, and when the next automatic try is due (see [BACKOFF_MIN]). Guarded by [fetchLock]. */
+    private var failures = 0
+    private var nextTry = 0L
 
     fun start() {
         trakt.onSignedIn = { scope.launch(Dispatchers.IO) { fetch(force = true) } }
+        trakt.onSignedOut = { clear() }
         scope.launch(Dispatchers.IO) {
             rebuildItems()
             trakt.ready.await()
@@ -58,12 +64,25 @@ class ContinueWatching(
         }
     }
 
-    /** Fetches from Trakt when the cache is 30 minutes old or more ([force]: right after sign-in). */
+    /**
+     * Fetches from Trakt when the cache is 30 minutes old or more ([force]: right after sign-in, or OK on the
+     * Trakt row). After a failure the next automatic try waits 1, 2, 5, 15, then every 30 minutes.
+     */
     suspend fun fetch(force: Boolean) = fetchLock.withLock {
         if (!trakt.signedIn || settings.continueMode == "off") return@withLock
-        if (!force && System.currentTimeMillis() - lastFetch.value < INTERVAL_MS) return@withLock
-        val playback = trakt.get("/sync/playback")?.let { runCatching { JSONArray(it) }.getOrNull() } ?: return@withLock
-        val watched = trakt.get("/sync/progress/watched?hide_completed=true&limit=100")?.let { runCatching { JSONArray(it) }.getOrNull() }
+        val now = System.currentTimeMillis()
+        if (!force) {
+            if (failures > 0 && now < nextTry) return@withLock
+            if (failures == 0 && now - lastFetch.value < INTERVAL_MS) return@withLock
+        }
+        val playback = try {
+            JSONArray(trakt.fetch("/sync/playback"))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            failed(e); return@withLock
+        }
+        val watched = runCatching { JSONArray(trakt.fetch("/sync/progress/watched?hide_completed=true&limit=100")) }.getOrNull()
 
         val out = mutableListOf<CwEntry>()
         for (i in 0 until playback.length()) {
@@ -94,6 +113,9 @@ class ContinueWatching(
             if (e.key !in keys) next += e
         }
         val all = (paused + next.sortedByDescending { it.at }.take(MAX_NEXT)).sortedByDescending { it.at }.take(MAX_ITEMS)
+        // Signed out (or the sign-in expired) while this was loading: don't bring the list back.
+        if (!trakt.signedIn) return@withLock
+        failures = 0; nextTry = 0L; lastError.value = ""
         entries.value = all
         save(all)
         lastFetch.value = System.currentTimeMillis()
@@ -112,8 +134,22 @@ class ContinueWatching(
 
     private fun time(s: String) = runCatching { Instant.parse(s).toEpochMilli() }.getOrDefault(0L)
 
-    /** Clears the cached list (sign out). */
-    fun clear() {
+    private fun failed(e: Exception) {
+        failures++
+        val waitMin = BACKOFF_MIN[(failures - 1).coerceAtMost(BACKOFF_MIN.size - 1)]
+        nextTry = System.currentTimeMillis() + waitMin * 60_000L
+        val why = when (e) {
+            is TraktError -> e.message.orEmpty()
+            is org.json.JSONException -> "Trakt's reply is not a list"
+            else -> e.javaClass.simpleName
+        }
+        val at = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+        lastError.value = "Couldn't update at $at: $why · next try in $waitMin min"
+    }
+
+    /** Clears the cached list (sign out, sign-in expired). Waits for a running update, so it can't come back. */
+    suspend fun clear() = fetchLock.withLock {
+        failures = 0; nextTry = 0L; lastError.value = ""
         entries.value = emptyList(); items.value = emptyList(); save(emptyList())
         lastFetch.value = 0L; sp.edit().putLong("fetchedAt", 0L).apply()
     }
@@ -185,5 +221,7 @@ class ContinueWatching(
         private const val INTERVAL_MS = 30L * 60 * 1000
         private const val MAX_NEXT = 10
         private const val MAX_ITEMS = 20
+        /** Minutes to wait after the 1st, 2nd, 3rd, 4th and every later failed update in a row. */
+        private val BACKOFF_MIN = longArrayOf(1, 2, 5, 15, 30)
     }
 }

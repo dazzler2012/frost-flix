@@ -24,6 +24,14 @@ class Settings(private val ctx: Context) {
         s(k, "").split('\n').map { it.trim() }.filter { it.isNotEmpty() }
     private fun putList(k: String, v: List<String>) = putS(k, v.joinToString("\n"))
 
+    /** True while [applyMode] writes a preset; any other write to a preset value is the user's own choice. */
+    private var applyingMode = false
+    /**
+     * For the values a performance mode sets: a change made by the user switches the mode to "custom",
+     * so Auto (applied again at every app start) never overwrites it.
+     */
+    private fun userTuned() { if (!applyingMode && perfMode != "custom") putS("perfMode", "custom") }
+
     // ---- Hero / carousel
     var heroAutoplay: Boolean get() = b("heroAutoplay", true); set(v) = putB("heroAutoplay", v)
     /** auto | performance | balanced | quality | custom */
@@ -53,7 +61,7 @@ class Settings(private val ctx: Context) {
     fun effectiveMode(): String = perfMode.let { if (it == "auto") autoTier else it }
 
     /** Glass copies of the backdrop: 480 px (light, default) or 720 px (crisper glass, more memory). */
-    var glassRes: Int get() = i("glassRes", 480); set(v) = putI("glassRes", if (v >= 720) 720 else 480)
+    var glassRes: Int get() = i("glassRes", 480); set(v) { putI("glassRes", if (v >= 720) 720 else 480); userTuned() }
 
     /** Which picture a title uses: main | second | best (highest resolution) | addon (the add-on's own). */
     var artChoice: String get() = s("artChoice", "main"); set(v) = putS("artChoice", v)
@@ -65,22 +73,27 @@ class Settings(private val ctx: Context) {
     }
     fun clearArtPicks() = putList("artPicks", emptyList())
     /** max = original pictures (4K source, sharpest) | high = 1280 px pictures (faster, lighter) */
-    var imageQuality: String get() = s("imageQuality", "max"); set(v) = putS("imageQuality", v)
+    var imageQuality: String get() = s("imageQuality", "max"); set(v) { putS("imageQuality", v); userTuned() }
     /** How many slides ahead are prepared (pictures, logos, glass). */
-    var prefetchDepth: Int get() = i("prefetchDepth", 4); set(v) = putI("prefetchDepth", v.coerceIn(1, 8))
+    var prefetchDepth: Int get() = i("prefetchDepth", 4); set(v) { putI("prefetchDepth", v.coerceIn(1, 8)); userTuned() }
 
     fun applyMode(m: String) {
-        when (if (m == "auto") deviceTier() else m) {
+        applyingMode = true
+        try { applyPreset(if (m == "auto") deviceTier() else m) } finally { applyingMode = false }
+        perfMode = m
+    }
+
+    private fun applyPreset(tier: String) {
+        when (tier) {
             "performance" -> { imageQuality = "high"; prefetchDepth = 2; transitionMs = 250; refraction = 0; heroGallery = false; glassRes = 480 }
             "balanced" -> { imageQuality = "max"; prefetchDepth = 4; transitionMs = 450; refraction = 6; heroGallery = true; galleryShots = 2; glassRes = 480 }
             "quality" -> { imageQuality = "max"; prefetchDepth = 6; transitionMs = 700; refraction = 14; heroGallery = true; galleryShots = 3; glassRes = 720 }
         }
-        perfMode = m
     }
 
     /** Apple TV style: each title shows a few of its backdrops before the carousel moves on. */
-    var heroGallery: Boolean get() = b("heroGallery", true); set(v) = putB("heroGallery", v)
-    var galleryShots: Int get() = i("galleryShots", 3); set(v) = putI("galleryShots", v.coerceIn(2, 6))
+    var heroGallery: Boolean get() = b("heroGallery", true); set(v) { putB("heroGallery", v); userTuned() }
+    var galleryShots: Int get() = i("galleryShots", 3); set(v) { putI("galleryShots", v.coerceIn(2, 6)); userTuned() }
     var heroIntervalSec: Int get() = i("heroIntervalSec", 8); set(v) = putI("heroIntervalSec", v.coerceIn(3, 60))
     /** logo | text | hidden */
     var titleMode: String get() = s("titleMode", "logo"); set(v) = putS("titleMode", v)
@@ -105,7 +118,7 @@ class Settings(private val ctx: Context) {
     var descLang: String get() = s("descLang", "en"); set(v) = putS("descLang", v)
     var tmdbToken: String get() = s("tmdbToken", ""); set(v) = putS("tmdbToken", v.trim())
 
-    var transitionMs: Int get() = i("transitionMs", 700); set(v) = putI("transitionMs", v.coerceIn(100, 2000))
+    var transitionMs: Int get() = i("transitionMs", 700); set(v) { putI("transitionMs", v.coerceIn(100, 2000)); userTuned() }
     var dotsAutoHide: Boolean get() = b("dotsAutoHide", true); set(v) = putB("dotsAutoHide", v)
 
     // ---- Clock / dock look
@@ -123,7 +136,7 @@ class Settings(private val ctx: Context) {
     /** liquid | clear | amoled | bow (black on white) */
     var tileStyle: String get() = s("tileStyle", "liquid"); set(v) = putS("tileStyle", v)
     /** How far the glass rim bends the background, dp. */
-    var refraction: Int get() = i("refraction", 14); set(v) = putI("refraction", v.coerceIn(0, 40))
+    var refraction: Int get() = i("refraction", 14); set(v) { putI("refraction", v.coerceIn(0, 40)); userTuned() }
     var metaScale: Float get() = f("metaScale", 1.0f); set(v) = putF("metaScale", v.coerceIn(0.6f, 2.0f))
     var genresScale: Float get() = f("genresScale", 1.0f); set(v) = putF("genresScale", v.coerceIn(0.6f, 2.0f))
     /** Opaque dark plate behind every icon, so transparent pack icons don't show the poster through. */

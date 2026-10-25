@@ -148,3 +148,12 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 - **Off the main thread:** reading the stored Trakt sign-in (Keystore decrypt) at app start, the QR codes in Settings, and importing icons from the icon folder. Settings → Continue Watching shows "Checking the sign-in…" for that moment.
 - **Settings:** closing Settings reloads the carousel only when the selected catalogs, "Titles per catalog", "Total titles" or "Shuffle" changed.
 - **Reply size:** API replies (add-ons, TMDB, Trakt, weather) are read up to 5 MB. A larger reply fails with "Reply is larger than 5 MB" (the cached copy is used if there is one).
+
+## Settings and Trakt (1.9.3-d6)
+
+- **Auto no longer overwrites your choices:** changing any value a performance mode sets (Glass detail, Picture quality, Prepare ahead, Slide transition / Transition speed, Glass refraction, Backdrop gallery, Pictures per title) switches Mode to Custom, on whichever page you change it. Auto is still applied at app start, but only while Mode is Auto.
+- **Token refresh timing:** the access token is refreshed when less than half its lifetime is left, at most a day early (was always a day early, which refreshed on every request with 24-hour tokens). Tokens stored before 1.9.3-d6 are treated as 24-hour tokens until their first refresh.
+- **Sign-out and expiry:** Continue Watching is cleared on "Sign out of Trakt" and when Trakt answers `invalid_grant`. Clearing waits for an update that is still running, and an update that finishes after sign-out no longer brings the list back.
+- **Failed updates:** retried after 1, 2, 5 and 15 minutes, then every 30 minutes. The page shows the last error ("Couldn't update at 21:04: HTTP 503 · … · next try in 5 min") until an update works. OK on the Trakt row still updates at once and shows the result.
+- **Force Trakt refresh now (hidden):** hold OK on "Signed in as …". Refreshes the token at once and shows "Refresh OK · new token valid until …" or the error (HTTP status and Trakt's `error` / `error_description`). The refresh sends `client_id`, `refresh_token`, `grant_type` and `redirect_uri`, no client secret, as Trakt's openapi.json describes. No token is ever shown.
+- **Cancel during sign-in:** a reply that arrives after Cancel is ignored; its tokens are never saved.

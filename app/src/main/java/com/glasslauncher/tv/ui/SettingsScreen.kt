@@ -76,7 +76,7 @@ private class Act(val title: String, val desc: String, val value: String = "", v
 private class Note(val text: String) : SRow
 private class AppItem(val entry: AppEntry) : SRow
 /** The Trakt sign-in block: one button that stays the same row (and keeps focus) in every state. */
-private class TraktBox(val state: Trakt.State, val username: String, val signedInInfo: String, val onClick: () -> Unit) : SRow
+private class TraktBox(val state: Trakt.State, val username: String, val signedInInfo: String, val onLong: (() -> Unit)? = null, val onClick: () -> Unit) : SRow
 
 private enum class Kind { Rows, About }
 private class Category(val title: String, val kind: Kind = Kind.Rows, val rows: @Composable () -> List<SRow> = { emptyList() })
@@ -137,7 +137,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
 
     val categories = listOf(
         Category("Performance") {
-            fun custom() { st.perfMode = "custom" }
+            // Changing any value below (or the same value on another page) switches Mode to Custom: see Settings.userTuned().
             listOf(
                 Adjust("Mode", when (st.perfMode) {
                     "auto" -> "Picked for this TV from its memory and graphics chip"
@@ -151,13 +151,13 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 }, { st.applyMode(cycle(listOf("auto", "performance", "balanced", "quality"), st.perfMode.takeIf { m -> m != "custom" } ?: "auto", it)) }),
                 Adjust("Glass detail", "Resolution of the picture the glass bends (higher = crisper glass, more memory)", {
                     when (st.glassRes) { 720 -> "Sharp (720 px)"; else -> "Standard (480 px)" }
-                }, { st.glassRes = cycle(listOf(480, 720), st.glassRes, it); custom() }),
+                }, { st.glassRes = cycle(listOf(480, 720), st.glassRes, it) }),
                 Adjust("Picture quality", "Carousel backdrops", { if (st.imageQuality == "high") "High (1280 px)" else "Maximum (original)" },
-                    { st.imageQuality = cycle(listOf("high", "max"), st.imageQuality, it); custom() }),
-                Adjust("Prepare ahead", "Slides loaded before you get to them", { "${st.prefetchDepth}" }, { st.prefetchDepth += it; custom() }),
-                Adjust("Slide transition", "", { "${st.transitionMs} ms" }, { st.transitionMs += it * 50; custom() }),
-                Adjust("Glass refraction", "0 = flat glass (lightest)", { "${st.refraction}" }, { st.refraction += it * 2; custom() }),
-                Toggle("Backdrop gallery", "Several pictures per title", { st.heroGallery }, { st.heroGallery = it; custom() }),
+                    { st.imageQuality = cycle(listOf("high", "max"), st.imageQuality, it) }),
+                Adjust("Prepare ahead", "Slides loaded before you get to them", { "${st.prefetchDepth}" }, { st.prefetchDepth += it }),
+                Adjust("Slide transition", "", { "${st.transitionMs} ms" }, { st.transitionMs += it * 50 }),
+                Adjust("Glass refraction", "0 = flat glass (lightest)", { "${st.refraction}" }, { st.refraction += it * 2 }),
+                Toggle("Backdrop gallery", "Several pictures per title", { st.heroGallery }, { st.heroGallery = it }),
             )
         },
         Category("Carousel") {
@@ -289,6 +289,8 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
             val traktUser by app.trakt.username.collectAsState()
             val cwList by app.cw.entries.collectAsState()
             val fetched by app.cw.lastFetch.collectAsState()
+            val cwError by app.cw.lastError.collectAsState()
+            val refreshCheck by app.trakt.refreshCheck.collectAsState()
             buildList {
                 add(Adjust("Show Continue Watching", "Where titles you are watching appear", {
                     when (st.continueMode) { "off" -> "Off"; "mixed" -> "Mixed with catalogs"; else -> "At the start" }
@@ -302,15 +304,23 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 else {
                     // Sign-in, the code and "Signed in as …" all live in this one row, so focus never leaves the page.
                     val ago = if (fetched <= 0L) "not loaded yet" else "updated ${((System.currentTimeMillis() - fetched) / 60_000).coerceAtLeast(0)} min ago"
-                    add(TraktBox(trakt, traktUser, "${cwList.size} titles · $ago · OK updates now (otherwise at most every 30 minutes)") {
+                    add(TraktBox(trakt, traktUser, "${cwList.size} titles · $ago · OK updates now (otherwise at most every 30 minutes)",
+                        // Hidden debug action: hold OK on "Signed in as …" to refresh the Trakt token now.
+                        onLong = if (trakt == Trakt.State.SignedIn) ({ io { "Force Trakt refresh now: " + app.trakt.forceRefresh() } }) else null,
+                    ) {
                         when (trakt) {
                             Trakt.State.Checking -> Unit
                             Trakt.State.Starting, is Trakt.State.Waiting -> app.trakt.cancelSignIn()
-                            Trakt.State.SignedIn -> io { app.cw.fetch(true); "Continue Watching updated" }
+                            Trakt.State.SignedIn -> io {
+                                if (st.continueMode == "off") "Continue Watching is off"
+                                else { app.cw.fetch(true); app.cw.lastError.value.ifBlank { "Continue Watching updated" } }
+                            }
                             else -> app.trakt.startSignIn()
                         }
                     })
-                    if (trakt == Trakt.State.SignedIn) add(Act("Sign out of Trakt", "Removes the sign-in and the list from this TV", "") { io { app.trakt.signOut(); app.cw.clear(); "Signed out of Trakt" } })
+                    if (trakt == Trakt.State.SignedIn && cwError.isNotBlank()) add(Note(cwError))
+                    if (trakt == Trakt.State.SignedIn && refreshCheck.isNotBlank()) add(Note("Force Trakt refresh now · $refreshCheck"))
+                    if (trakt == Trakt.State.SignedIn) add(Act("Sign out of Trakt", "Removes the sign-in and the list from this TV", "") { io { app.trakt.signOut(); "Signed out of Trakt" } })
                 }
             }
         },
@@ -569,7 +579,7 @@ private fun TraktBoxView(row: TraktBox, s: Float) {
                 is Trakt.State.Failed -> "Sign in to Trakt" to "Try again"
                 else -> "Sign in to Trakt" to "Continue Watching comes from what NuvioTV scrobbles to Trakt"
             }
-            Frame(s, onClick = row.onClick) { Label(title, desc, s, Modifier.weight(1f)) }
+            Frame(s, onClick = row.onClick, onLong = row.onLong) { Label(title, desc, s, Modifier.weight(1f)) }
         }
     }
 }

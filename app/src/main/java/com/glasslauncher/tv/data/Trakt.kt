@@ -8,7 +8,9 @@ import com.glasslauncher.tv.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -23,10 +25,16 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.net.ssl.HttpsURLConnection
 
-/** Not a data class on purpose: no generated toString(), so tokens can't end up in a log by accident. */
-class TraktTokens(val access: String, val refresh: String, val expiresAt: Long) {
+/**
+ * Not a data class on purpose: no generated toString(), so tokens can't end up in a log by accident.
+ * [lifeMs] is the access token's lifetime from Trakt's expires_in; 0 for tokens stored before 1.9.3-d6.
+ */
+class TraktTokens(val access: String, val refresh: String, val expiresAt: Long, val lifeMs: Long = 0L) {
     override fun toString() = "TraktTokens(***)"
 }
+
+/** A Trakt request that didn't give a usable answer. The message is safe to show: never a token or the client ID. */
+class TraktError(message: String) : Exception(message)
 
 /**
  * Trakt tokens in app-private SharedPreferences, encrypted with an AES-GCM key that lives in the
@@ -52,7 +60,7 @@ private class TokenVault(ctx: Context) {
 
     @Synchronized
     fun save(t: TraktTokens): Boolean = runCatching {
-        val plain = JSONObject().put("a", t.access).put("r", t.refresh).put("e", t.expiresAt).toString().toByteArray()
+        val plain = JSONObject().put("a", t.access).put("r", t.refresh).put("e", t.expiresAt).put("l", t.lifeMs).toString().toByteArray()
         val c = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
         val blob = Base64.encodeToString(c.iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(c.doFinal(plain), Base64.NO_WRAP)
         // commit(), not apply(): a single-use refresh token must be on disk before the old one is forgotten.
@@ -65,7 +73,7 @@ private class TokenVault(ctx: Context) {
         val (iv, ct) = blob.split(":").let { Base64.decode(it[0], Base64.NO_WRAP) to Base64.decode(it[1], Base64.NO_WRAP) }
         val c = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv)) }
         val o = JSONObject(String(c.doFinal(ct)))
-        TraktTokens(o.getString("a"), o.getString("r"), o.getLong("e"))
+        TraktTokens(o.getString("a"), o.getString("r"), o.getLong("e"), o.optLong("l", 0L))
     }.getOrNull()
 
     @Synchronized
@@ -106,6 +114,10 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
     private var signInJob: Job? = null
     /** Called after a successful sign-in (Continue Watching loads right away). */
     var onSignedIn: () -> Unit = {}
+    /** Called after sign-out and when the sign-in expired (Continue Watching clears its list). */
+    var onSignedOut: suspend () -> Unit = {}
+    /** Result of the last "Force Trakt refresh now" (Settings → Continue Watching, hold OK on the Trakt row). */
+    val refreshCheck = MutableStateFlow("")
 
     val state = MutableStateFlow<State>(if (configured) State.Checking else State.NotConfigured)
     val signedIn: Boolean get() = state.value == State.SignedIn
@@ -128,7 +140,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
                 state.compareAndSet(State.Checking, s)
             }
             ready.complete(Unit)
-            if (signedIn && username.value.isBlank()) accessToken()?.let { loadUsername(it) }
+            if (signedIn && username.value.isBlank()) runCatching { accessToken() }.getOrNull()?.let { loadUsername(it) }
         }
     }
 
@@ -202,7 +214,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
         val life = o.optLong("expires_in", 7L * 24 * 3600)
         val created = o.optLong("created_at", 0L)
         val expiresAt = if (created > 0) (created + life) * 1000 else System.currentTimeMillis() + life * 1000
-        TraktTokens(access, refresh, expiresAt)
+        TraktTokens(access, refresh, expiresAt, life * 1000)
     }.getOrNull()
 
     // ---- Device code sign-in
@@ -221,6 +233,8 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
 
     private suspend fun deviceFlow() {
         val start = runCatching { call("POST", "/oauth/device/code", JSONObject().put("client_id", clientId)) }
+        // call() blocks and can't be cancelled: if Cancel was pressed meanwhile, stop here without touching the state.
+        currentCoroutineContext().ensureActive()
         val s = start.getOrNull()
         if (s == null || s.code != 200) {
             state.value = State.Failed(STEP_CODE + (if (s == null) "can't reach auth.trakt.tv (${start.exceptionOrNull()?.javaClass?.simpleName})" else describe(s)))
@@ -238,12 +252,16 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
         state.value = State.Waiting(userCode, url, completeUrl(o, url, userCode) ?: url, deadline)
         while (System.currentTimeMillis() + interval * 1000 < deadline) {
             delay(interval * 1000)
-            val r = runCatching { call("POST", "/oauth/device/token", JSONObject().put("code", device).put("client_id", clientId)) }.getOrNull()
-                ?: continue // network hiccup: try again at the next interval
+            val reply = runCatching { call("POST", "/oauth/device/token", JSONObject().put("code", device).put("client_id", clientId)) }.getOrNull()
+            currentCoroutineContext().ensureActive() // Cancel pressed during the request: never save its tokens
+            val r = reply ?: continue // network hiccup: try again at the next interval
             when (r.code) {
                 200 -> {
                     val t = parseTokens(r.body)
-                    if (t == null || !lock.withLock { vault.save(t) }) { state.value = State.Failed("Couldn't store the Trakt sign-in"); return }
+                    // Checked again under the lock, right before saving.
+                    if (t == null || !lock.withLock { currentCoroutineContext().ensureActive(); vault.save(t) }) {
+                        state.value = State.Failed("Couldn't store the Trakt sign-in"); return
+                    }
                     vault.needsSignIn = false
                     loadUsername(t.access)
                     state.value = State.SignedIn
@@ -265,55 +283,114 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
 
     // ---- Tokens
 
-    /** Must hold [lock]. Replaces both stored tokens on success; on invalid_grant asks to sign in again. */
-    private fun refreshLocked(t: TraktTokens): TraktTokens? {
-        val r = runCatching {
+    private sealed interface Refresh {
+        class Ok(val tokens: TraktTokens) : Refresh
+        /** [keep]: the old token, while it is still valid (it can be used until then). */
+        class Failed(val reason: String, val keep: TraktTokens?) : Refresh
+        /** invalid_grant: the sign-in is gone; tokens deleted, the page asks to sign in again. */
+        data object Expired : Refresh
+    }
+
+    /**
+     * Must hold [lock]. Sends client_id, refresh_token, grant_type and redirect_uri (what Trakt's openapi.json
+     * asks for; no client secret). Replaces both stored tokens on success; on invalid_grant asks to sign in again.
+     */
+    private fun refreshLocked(t: TraktTokens): Refresh {
+        val valid = t.takeIf { System.currentTimeMillis() < it.expiresAt }
+        val r = try {
             call("POST", "/oauth/token", JSONObject()
                 .put("client_id", clientId)
                 .put("refresh_token", t.refresh)
                 .put("redirect_uri", BuildConfig.TRAKT_REDIRECT_URI)
                 .put("grant_type", "refresh_token"))
-        }.getOrNull() ?: return t.takeIf { System.currentTimeMillis() < it.expiresAt } // offline: keep using a still-valid token
+        } catch (e: Exception) {
+            return Refresh.Failed("can't reach auth.trakt.tv (${e.javaClass.simpleName})", valid) // offline
+        }
         if (r.code == 200) {
-            val n = parseTokens(r.body) ?: return null
-            if (!vault.save(n)) return null
-            return n
+            val n = parseTokens(r.body) ?: return Refresh.Failed("HTTP 200 · reply has no tokens", valid)
+            if (!vault.save(n)) return Refresh.Failed("couldn't store the new tokens", valid)
+            return Refresh.Ok(n)
         }
         val error = runCatching { JSONObject(r.body).optString("error") }.getOrDefault("")
         if (error == "invalid_grant") {
             vault.clear(); vault.needsSignIn = true
             vault.username = ""; username.value = ""
             state.value = State.Failed(SIGN_IN_AGAIN)
-            return null
+            // Not inline: the caller may hold Continue Watching's lock, which clearing the list needs.
+            scope.launch { onSignedOut() }
+            return Refresh.Expired
         }
-        return t.takeIf { System.currentTimeMillis() < it.expiresAt }
+        return Refresh.Failed(describe(r), valid)
     }
 
-    /** A valid access token, refreshed when it has less than a day left. */
-    private suspend fun accessToken(force: Boolean = false, used: String? = null): String? = lock.withLock {
-        val t = vault.load() ?: return@withLock null
+    /**
+     * How long before expiry the access token is refreshed: half its lifetime, at most a day. Tokens stored
+     * before 1.9.3-d6 have no lifetime; they are treated as 24-hour tokens (12 hours early), safe either way.
+     */
+    private fun refreshMargin(t: TraktTokens): Long = minOf(REFRESH_EARLY_MS, (t.lifeMs.takeIf { it > 0 } ?: REFRESH_EARLY_MS) / 2)
+
+    /** A valid access token, refreshed when [refreshMargin] is reached. Throws [TraktError] when there is none. */
+    private suspend fun accessToken(force: Boolean = false, used: String? = null): String = lock.withLock {
+        val t = vault.load() ?: throw TraktError(if (signedIn) "the stored Trakt sign-in can't be read" else "not signed in to Trakt")
         // Another caller may already have refreshed while we waited for the lock.
         if (force && used != null && t.access != used) return@withLock t.access
-        if (force || System.currentTimeMillis() > t.expiresAt - REFRESH_EARLY_MS) refreshLocked(t)?.access else t.access
+        if (!force && System.currentTimeMillis() <= t.expiresAt - refreshMargin(t)) return@withLock t.access
+        when (val r = refreshLocked(t)) {
+            is Refresh.Ok -> r.tokens.access
+            is Refresh.Failed -> r.keep?.access ?: throw TraktError("token refresh failed: ${r.reason}")
+            Refresh.Expired -> throw TraktError(SIGN_IN_AGAIN)
+        }
     }
 
-    /** Authenticated GET; returns the body, or null on failure. One refresh-and-retry on 401. */
-    suspend fun get(path: String): String? = withContext(Dispatchers.IO) {
-        if (!configured || !signedIn) return@withContext null
-        val token = accessToken() ?: return@withContext null
-        var r = runCatching { call("GET", path, bearer = token) }.getOrNull() ?: return@withContext null
-        if (r.code == 401) {
-            val again = accessToken(force = true, used = token) ?: return@withContext null
-            r = runCatching { call("GET", path, bearer = again) }.getOrNull() ?: return@withContext null
+    /** Authenticated GET on api.trakt.tv; the body, or [TraktError] with a reason. One refresh-and-retry on 401. */
+    suspend fun fetch(path: String): String = withContext(Dispatchers.IO) {
+        if (!configured) throw TraktError("Trakt not configured")
+        if (!signedIn) throw TraktError("not signed in to Trakt")
+        fun send(token: String) = try { call("GET", path, bearer = token) } catch (e: ReplyTooLarge) {
+            throw TraktError(e.message ?: "reply too large")
+        } catch (e: Exception) {
+            throw TraktError("can't reach api.trakt.tv (${e.javaClass.simpleName})")
         }
-        if (r.code in 200..299) r.body else null
+        val token = accessToken()
+        var r = send(token)
+        if (r.code == 401) r = send(accessToken(force = true, used = token))
+        if (r.code !in 200..299) throw TraktError(describe(r))
+        r.body
+    }
+
+    /** Like [fetch], or null on any failure. */
+    suspend fun get(path: String): String? = runCatching { fetch(path) }.getOrNull()
+
+    /**
+     * Debug: refreshes the token now, whatever its age, and returns what happened (also kept in [refreshCheck]).
+     * Never shows a token; only the outcome, Trakt's error text and the new expiry.
+     */
+    suspend fun forceRefresh(): String = withContext(Dispatchers.IO) {
+        val msg = if (!signedIn) "Not signed in to Trakt" else lock.withLock {
+            val t = vault.load() ?: return@withLock "Refresh failed: the stored sign-in can't be read"
+            val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+            when (val r = refreshLocked(t)) {
+                is Refresh.Ok -> {
+                    val life = r.tokens.lifeMs / 3_600_000.0
+                    "Refresh OK · new token valid until ${fmt.format(java.util.Date(r.tokens.expiresAt))}" +
+                        " (lifetime ${if (life >= 48) "${(life / 24).toInt()} days" else "${life.toInt()} hours"})"
+                }
+                is Refresh.Failed -> "Refresh failed: ${r.reason}" +
+                    (r.keep?.let { " · the current token still works until ${fmt.format(java.util.Date(it.expiresAt))}" } ?: "")
+                Refresh.Expired -> "Refresh failed: invalid_grant · $SIGN_IN_AGAIN"
+            }
+        }
+        refreshCheck.value = msg
+        msg
     }
 
     suspend fun signOut() = withContext(Dispatchers.IO) {
         cancelSignIn()
         val t = lock.withLock { vault.load().also { vault.clear(); vault.needsSignIn = false; vault.username = "" } }
         username.value = ""
+        refreshCheck.value = ""
         state.value = if (configured) State.SignedOut else State.NotConfigured
+        onSignedOut()
         // Best effort: also end the session on Trakt's side.
         if (t != null) runCatching { call("POST", "/oauth/revoke", JSONObject().put("token", t.access).put("client_id", clientId)) }
     }
