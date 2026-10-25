@@ -150,8 +150,8 @@ class Settings(private val ctx: Context) {
     var hiddenApps: List<String> get() = list("hiddenApps"); set(v) = putList("hiddenApps", v)
 
     // ---- Nuvio
-    /** legacy | reshaped */
-    var nuvioTarget: String get() = s("nuvioTarget", "legacy"); set(v) = putS("nuvioTarget", v)
+    /** auto | nuviotv | legacy | reshaped. "auto" opens titles in whichever Nuvio is installed, NuvioTV first. */
+    var nuvioTarget: String get() = s("nuvioTarget", "auto"); set(v) = putS("nuvioTarget", v)
 
     // ---- Screensaver
     var idleMinutes: Int get() = i("idleMinutes", 0); set(v) = putI("idleMinutes", v.coerceAtLeast(0))

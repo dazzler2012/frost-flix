@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Glassio (D)".
-- `versionName` changed to `1.9.3-d1`. `versionCode` stays 25.
+- `versionName` changed to `1.9.3-d2` (was `1.9.3-d1`). `versionCode` is 26 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -84,6 +84,13 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 - `LICENSE` (GPL-3.0) was added from upstream commit `aac6937`. The `v1.9.3` tag itself has no LICENSE file.
 - The upstream READMEs moved to `docs/upstream/` with a note on top and without the screenshot links. There is a new short `README.md`.
 - `.gitignore` now also ignores `*.jks`, `*.keystore` and `keystore.properties`. `local.properties` was already ignored.
+
+## Added: NuvioTV (`com.nuvio.tv`) support
+
+- Carousel titles now also open in NuvioTV, using its `nuvio://meta?type=…&id=…` link.
+- "Open titles in" has a new default, "Automatic": NuvioTV first, then Nuvio Legacy, then Nuvio Re-Shaped, whichever is installed. A fixed choice that is not installed falls back to the same order.
+- If the installed Nuvio refuses the title link, Glassio opens the Nuvio app instead.
+- `com.nuvio.tv` was added to `<queries>` in the manifest and to the preferred apps list.
 
 ## Not changed
 

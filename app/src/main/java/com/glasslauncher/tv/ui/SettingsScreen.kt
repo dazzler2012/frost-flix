@@ -279,8 +279,10 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
         },
         Category("Nuvio") {
             listOf(
-                Adjust("Open titles in", "Where a carousel title opens", { if (st.nuvioTarget == "reshaped") "Nuvio Re-Shaped" else "Nuvio Legacy" }, {
-                    st.nuvioTarget = cycle(listOf("legacy", "reshaped"), st.nuvioTarget, it)
+                Adjust("Open titles in", "Where a carousel title opens", {
+                    when (st.nuvioTarget) { "nuviotv" -> "NuvioTV"; "legacy" -> "Nuvio Legacy"; "reshaped" -> "Nuvio Re-Shaped"; else -> "Automatic" }
+                }, {
+                    st.nuvioTarget = cycle(listOf("auto", "nuviotv", "legacy", "reshaped"), st.nuvioTarget, it)
                 }),
                 Act("TMDB token", "Adds title logos, full-size art, synopsis and platform", if (st.tmdbToken.isBlank()) "Not set" else "Set") {
                     dialog = TextEntry("TMDB read access token", "", "Paste the token") {

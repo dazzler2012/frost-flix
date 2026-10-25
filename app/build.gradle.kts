@@ -11,8 +11,8 @@ android {
         applicationId = "tv.darren.glassio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 25
-        versionName = "1.9.3-d1"
+        versionCode = 26
+        versionName = "1.9.3-d2"
     }
     // Release signing comes only from environment variables (set by CI from repository secrets).
     // Without them the release APK is built unsigned. No keystore or password lives in this repo.
