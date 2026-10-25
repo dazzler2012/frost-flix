@@ -56,17 +56,4 @@ object MemoryStats {
         fun kb(key: String) = mi.getMemoryStat(key)?.toLongOrNull()?.let { mb(it * 1024) } ?: "?"
         return "graphics ${kb("summary.graphics")} MB, private other ${kb("summary.private-other")} MB, total PSS ${kb("summary.total-pss")} MB"
     }
-
-    /**
-     * Frees the GPU memory the render thread still caches for us. When a window stops, Android's renderer keeps
-     * textures used in the last 30 s, and TRIM_MEMORY_UI_HIDDEN only cuts its cache to half its limit (the limit
-     * is 48 bytes per pixel of the display mode: ~199 MB of that half at 4K). Destroying a renderer purges every
-     * cached resource not used in the last 30 s (CanvasContext::destroy → trimStaleResources, in the
-     * Android 11 source). The renderer made here never draws; it only shares the render thread's GPU context.
-     * Call on the main thread, more than 30 s after the screen was last drawn. Android 10+ (HardwareRenderer).
-     */
-    fun releaseGpu(): Boolean {
-        if (android.os.Build.VERSION.SDK_INT < 29) return false
-        return runCatching { android.graphics.HardwareRenderer().destroy() }.isSuccess
-    }
 }

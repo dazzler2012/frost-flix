@@ -6,7 +6,8 @@ import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
+import kotlinx.coroutines.flow.collectLatest
+import kotlin.math.roundToInt
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
@@ -121,10 +122,17 @@ const val CATALOGS_CATEGORY = 4
 /** Pseudo package used by move mode for the Apps folder tile. */
 private const val FOLDER = "__apps_folder__"
 
-private fun imgReq(ctx: android.content.Context, data: Any?, w: Int = 1920, h: Int = 1080) =
+private fun imgReq(ctx: android.content.Context, data: Any?, w: Int = 1920, h: Int = 1080, prepare: Boolean = false) =
     // Decoded in software (the image loader never makes hardware bitmaps, see GlassApp): backdrops are baked
     // into a new bitmap on the CPU (bakeBackdrop).
-    ImageRequest.Builder(ctx).data(data).size(w, h).build()
+    ImageRequest.Builder(ctx).data(data).size(w, h)
+        // Pictures drawn as they are (logos): the render thread uploads them to the GPU in its idle time once
+        // decoded, instead of in the middle of the frame that first shows them.
+        .apply { if (prepare) listener(onSuccess = { _, r -> (r.image as? coil3.BitmapImage)?.bitmap?.prepareToDraw() }) }
+        .build()
+
+/** A logo request; the same one for preloading and for drawing, so both hit the same memory cache entry. */
+private fun logoReq(ctx: android.content.Context, url: String) = imgReq(ctx, url, 1000, 400, prepare = true)
 
 private fun Modifier.clipR(r: Dp): Modifier = this.clip(RoundedCornerShape(r))
 
@@ -178,6 +186,21 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
     val images = LocalImageCaches.current
     // In "performance" mode only two baked full-screen backdrops are kept (about 8 MB each at 1080p).
     images.maxBaked = if (settings.effectiveMode() == "performance") 2 else 4
+    // What the glass draws, derived from the states above and read only while drawing: a slide change redraws
+    // the glass surfaces, it doesn't recompose this screen or the ~20 tiles.
+    // Clear glass shows the page picture itself (full resolution, scrims included); the small glass copy
+    // (ImageCaches) is only the fallback before the first picture is on screen.
+    val pics = remember {
+        androidx.compose.runtime.derivedStateOf {
+            val b = backImgs; val p = prevImgs
+            val pageSharp = images.peekHalf(shownBackdrop)
+            GlassPics(
+                b?.first, pageSharp ?: b?.second, b?.third,
+                p?.first, if (p != null) (images.peekHalf(prevBackdrop) ?: p.second) else null,
+                sharpIsPage = pageSharp != null,
+            )
+        }
+    }
     LaunchedEffect(backdrop, settings.blurRadius, settings.glassRes) {
         images.res = settings.glassRes
         val u = backdrop ?: return@LaunchedEffect
@@ -205,7 +228,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         val (bw, bh) = bakeSize(ctx)
         val src = fullBmp
         val baked = images.getBaked(u, src) ?: bakeCached(images, u, src, bw, bh)
-        if (images.peekHalf(baked) == null) withContext(Dispatchers.Default) { halfOf(images, baked) }
+        if (images.peekHalf(baked) == null) withContext(ImageCaches.bakeDispatcher) { halfOf(images, baked) }
         // Page and glass fade in the same frames with the same timing, so the bar never runs ahead.
         prevImgs = backImgs
         prevBackdrop = shownBackdrop
@@ -225,7 +248,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         }
         upgrade?.let { d -> bmpOf(d.await())?.let { hi ->
             val (bw, bh) = bakeSize(ctx)
-            val b = withContext(Dispatchers.Default) { bakeBackdrop(hi, bw, bh).also { halfOf(images, it) } }
+            val b = withContext(ImageCaches.bakeDispatcher) { bakeBackdrop(hi, bw, bh).also { halfOf(images, it) } }
             fadeMs = 0; shownBackdrop = b
         } }
     }
@@ -294,11 +317,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         // Dock icons are decoded at the size the tiles draw them, which follows the screen width.
         androidx.compose.runtime.SideEffect { app.apps.screenWidthPx = rootW }
         val veil = animateFloatAsState(if (expanded && !folderOpen) 1f else 0f, tween(320), label = "veil")
-        // Clear glass shows the page picture itself (full resolution, scrims included); the small
-        // glass copy (ImageCaches) is only the fallback before the first picture is on screen.
-        val pageSharp = images.peekHalf(shownBackdrop)
-        val env = GlassEnv(backImgs?.first, pageSharp ?: backImgs?.second, backImgs?.third, rootW, rootH, settings.glassTint, settings.refraction, 1f, wobble.asState(),
-            prevImgs?.first, if (prevImgs != null) (images.peekHalf(prevBackdrop) ?: prevImgs?.second) else null, mix.asState(), veil, sharpIsPage = pageSharp != null)
+        val env = GlassEnv(pics, rootW, rootH, settings.glassTint, settings.refraction, 1f, wobble.asState(), mix.asState(), veil)
         val radius = settings.cornerRadius
         val metrics = remember(s, maxWidth, settings.dockScale) { DockMetrics(s, maxWidth.value, settings.dockScale) }
 
@@ -309,13 +328,17 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
             // The scrims are baked into the picture (bakeBackdrop): a slide change draws two flat pictures and
             // nothing else, which keeps the crossfade smooth on TV graphics chips.
             if (!folderOpen) Box(Modifier.fillMaxSize()) {
-                Backdrop(shownBackdrop, fadeMs)
+                Backdrop({ shownBackdrop }, { fadeMs })
             }
             // Dock open: the whole page blurs and darkens (the glass draws the same veil, see LiquidSurface).
             val veilOn by remember { androidx.compose.runtime.derivedStateOf { veil.value > 0.01f } }
             if (veilOn && !folderOpen) {
-                backImgs?.third?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { alpha = veil.value }) }
-                Box(Modifier.fillMaxSize().graphicsLayer { alpha = veil.value }.background(Color.Black.copy(alpha = VEIL_DIM)))
+                // Picture and dimming drawn with their own opacity: no full-screen offscreen layer while it fades.
+                androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                    val v = veil.value
+                    pics.value.heavy?.let { drawCropped(it, v, androidx.compose.ui.graphics.FilterQuality.Low) }
+                    drawRect(Color.Black.copy(alpha = VEIL_DIM * v))
+                }
             }
 
             // Fully covered by settings or the folder: stop drawing it at all.
@@ -453,7 +476,7 @@ private fun bakeSize(ctx: android.content.Context): Pair<Int, Int> {
  * the work is done anyway, so the next visit to this slide finds it in the cache.
  */
 private suspend fun bakeCached(images: ImageCaches, url: String, src: ImageBitmap, w: Int, h: Int): ImageBitmap =
-    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Default) {
+    withContext(kotlinx.coroutines.NonCancellable + ImageCaches.bakeDispatcher) {
         images.getBaked(url, src) ?: bakeBackdrop(src, w, h).also { images.putBaked(url, src, it); halfOf(images, it) }
     }
 
@@ -488,15 +511,57 @@ private fun immutable(b: android.graphics.Bitmap): android.graphics.Bitmap {
     return r
 }
 
+/** [img] scaled to cover the whole area and centred (ContentScale.Crop), at [alpha]. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCropped(img: ImageBitmap, alpha: Float, quality: androidx.compose.ui.graphics.FilterQuality) {
+    val w = size.width; val h = size.height
+    if (w < 1f || h < 1f) return
+    val sc = maxOf(w / img.width, h / img.height)
+    val sw = (w / sc).coerceAtMost(img.width.toFloat()); val sh = (h / sc).coerceAtMost(img.height.toFloat())
+    drawImage(
+        img,
+        srcOffset = androidx.compose.ui.unit.IntOffset(((img.width - sw) / 2f).toInt(), ((img.height - sh) / 2f).toInt()),
+        srcSize = androidx.compose.ui.unit.IntSize(sw.toInt().coerceAtLeast(1), sh.toInt().coerceAtLeast(1)),
+        dstSize = androidx.compose.ui.unit.IntSize(w.toInt(), h.toInt()),
+        alpha = alpha, filterQuality = quality,
+    )
+}
+
+private class FadeLayer(val bmp: ImageBitmap?, val alpha: androidx.compose.animation.core.Animatable<Float, androidx.compose.animation.core.AnimationVector1D>)
+
+private val emptyBackdrop = Brush.linearGradient(listOf(Color(0xFF110E26), Color(0xFF3A1B52), Color(0xFF0D1A3A)))
+
+/**
+ * The page picture, crossfaded like Compose's Crossfade (the old one fades out while the new one fades in, both
+ * linear, [msOf] long), but each picture is drawn with its own opacity: no full-screen offscreen layer per
+ * picture, and neither the picture nor its fade is read in composition, so a slide change only redraws this.
+ * Same bitmap, same frame, same fade as the glass: the two can never drift apart.
+ */
 @Composable
-private fun Backdrop(bmp: ImageBitmap?, ms: Int) {
-    // Same bitmap, same frame, same fade as the glass: the two can never drift apart.
-    Crossfade(targetState = bmp, animationSpec = tween(ms, easing = androidx.compose.animation.core.LinearEasing), label = "backdrop") { b ->
-        if (b != null) {
+private fun Backdrop(bmpOf: () -> ImageBitmap?, msOf: () -> Int) {
+    val layers = remember { androidx.compose.runtime.mutableStateListOf<FadeLayer>() }
+    LaunchedEffect(Unit) {
+        androidx.compose.runtime.snapshotFlow { bmpOf() }.collectLatest { b ->
+            if (layers.isEmpty()) { layers.add(FadeLayer(b, androidx.compose.animation.core.Animatable(1f))); return@collectLatest }
+            val ms = msOf()
+            val old = layers.toList()
+            val l = FadeLayer(b, androidx.compose.animation.core.Animatable(0f))
+            layers.add(l)
+            kotlinx.coroutines.coroutineScope {
+                old.forEach { o -> launch { o.alpha.animateTo(0f, tween(ms, easing = androidx.compose.animation.core.LinearEasing)) } }
+                l.alpha.animateTo(1f, tween(ms, easing = androidx.compose.animation.core.LinearEasing))
+            }
+            layers.removeAll(old)
+        }
+    }
+    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+        for (l in layers) {
+            val a = l.alpha.value
+            if (a <= 0f) continue
+            val b = l.bmp
             // Baked at screen size: drawn 1:1, so plain sampling (High would add mipmap/cubic work for nothing).
-            Image(b, null, contentScale = ContentScale.FillBounds, filterQuality = androidx.compose.ui.graphics.FilterQuality.None, modifier = Modifier.fillMaxSize())
-        } else {
-            Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF110E26), Color(0xFF3A1B52), Color(0xFF0D1A3A)))))
+            if (b != null) drawImage(b, dstSize = androidx.compose.ui.unit.IntSize(size.width.roundToInt(), size.height.roundToInt()), alpha = a,
+                filterQuality = androidx.compose.ui.graphics.FilterQuality.None)
+            else drawRect(emptyBackdrop, alpha = a)
         }
     }
 }
@@ -567,7 +632,7 @@ private fun HeroSection(
                 kotlinx.coroutines.coroutineScope {
                     if (t.background.isNotBlank()) launch { loader.execute(imgReq(ctx, t.background)) }
                     if (t.background.isNotBlank()) launch { images.glass(ctx, t.background, settings.blurRadius) }
-                    if (t.logo.isNotBlank()) launch { loader.execute(imgReq(ctx, t.logo, 1000, 400)) }
+                    if (t.logo.isNotBlank()) launch { loader.execute(logoReq(ctx, t.logo)) }
                 }
             }
         }
@@ -583,7 +648,7 @@ private fun HeroSection(
         val loader = SingletonImageLoader.get(ctx)
         while (true) {
             val next = gallery[(shot + 1).mod(gallery.size)]
-            loader.enqueue(imgReq(ctx, next)); launch { images.glass(ctx, next, settings.blurRadius) }
+            images.track(loader.enqueue(imgReq(ctx, next))); launch { images.glass(ctx, next, settings.blurRadius) }
             delay(shotMs)
             if (shot + 1 >= gallery.size) break
             shot++
@@ -621,7 +686,7 @@ private fun HeroSection(
         // Both directions, a few slides deep, glass copies included.
         for ((k, n) in window) {
             if (n.background.isNotBlank()) {
-                loader.enqueue(imgReq(ctx, sized(n.background, "w1280")))
+                images.track(loader.enqueue(imgReq(ctx, sized(n.background, "w1280"))))
                 if (kotlin.math.abs(k) <= 1) launch {
                     val u = n.background
                     val r = loader.execute(imgReq(ctx, if (settings.imageQuality == "high") sized(u, "w1280") else u))
@@ -630,7 +695,7 @@ private fun HeroSection(
                 }
                 launch { images.glass(ctx, n.background, settings.blurRadius) }
             }
-            if (n.logo.isNotBlank()) loader.enqueue(imgReq(ctx, n.logo, 1000, 400))
+            if (n.logo.isNotBlank()) images.track(loader.enqueue(logoReq(ctx, n.logo)))
         }
     }
     // Home pressed while on the home screen: back to the first slide.
@@ -652,11 +717,17 @@ private fun HeroSection(
         }
     }
 
-    val alpha by animateFloatAsState(if (hidden) 0f else 1f, tween(250), label = "heroAlpha")
+    val alphaState = animateFloatAsState(if (hidden) 0f else 1f, tween(250), label = "heroAlpha")
+    // Read while drawing. The text block and the dots don't overlap, so fading each in its own small layer looks
+    // the same as fading one full-screen layer around both, at a fraction of the offscreen texture.
+    val fade = Modifier.graphicsLayer { alpha = alphaState.value }
+    // Current enrichment for the long-press handler, without making a new handler (and recomposing the text)
+    // every time a TMDB result arrives for some other title.
+    val enrichedNow by androidx.compose.runtime.rememberUpdatedState(enriched)
     val dotsOn = items.size > 1 && settings.dotsMode != "hidden" && (!settings.dotsAutoHide || focused)
     val dotsAlpha by animateFloatAsState(if (dotsOn) 1f else 0f, tween(300), label = "dotsAlpha")
 
-    Box(Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha }) {
+    Box(Modifier.fillMaxSize()) {
         val shown = textItem
         if (shown != null) {
             HeroInfo(
@@ -665,7 +736,7 @@ private fun HeroSection(
                 onPrev = { app.navAt = System.currentTimeMillis(); index-- }, onNext = { app.navAt = System.currentTimeMillis(); index++ },
                 onOpen = { NuvioLaunch.open(ctx, settings, shown) },
                 onLong = {
-                    val base = enriched[shown.key] ?: shown
+                    val base = enrichedNow[shown.key] ?: shown
                     val options = artOptions(base)
                     if (options.size < 2) toast(ctx, "No other pictures for ${shown.name} (add a TMDB token for more)")
                     else {
@@ -675,10 +746,10 @@ private fun HeroSection(
                         toast(ctx, "Picture ${(cur + 1) % options.size + 1} of ${options.size} · ${shown.name}  (hold OK again for the next)")
                     }
                 },
-                modifier = Modifier.align(Alignment.TopStart),
+                modifier = Modifier.align(Alignment.TopStart).then(fade),
             )
         } else {
-            EmptyHint(status, s, heroFocus, firstTile, Modifier.align(Alignment.TopStart)) {
+            EmptyHint(status, s, heroFocus, firstTile, Modifier.align(Alignment.TopStart).then(fade)) {
                 app.requestSettings.intValue = CATALOGS_CATEGORY; app.requestSettingsRev.intValue++
             }
         }
@@ -687,7 +758,7 @@ private fun HeroSection(
                 total = items.size, current = index.mod(items.size), mode = settings.dotsMode, max = settings.dotsMax, s = s,
                 modifier = Modifier.align(Alignment.BottomCenter)
                     .padding(bottom = (metrics.collapsedH + metrics.bottomMargin + 10 * s).dp)
-                    .graphicsLayer { this.alpha = dotsAlpha },
+                    .graphicsLayer { this.alpha = dotsAlpha * alphaState.value },
             )
         }
     }
@@ -859,7 +930,7 @@ private fun Title(item: HeroItem, mode: String, scale: Float, s: Float) {
     )
     if (mode == "text" || item.logo.isBlank()) { asText(); return }
     val ctx = LocalContext.current
-    val req = remember(item.logo) { imgReq(ctx, item.logo, 1000, 400) }
+    val req = remember(item.logo) { logoReq(ctx, item.logo) }
     var ratio by remember(item.logo) { mutableStateOf<Float?>(null) }
     var failed by remember(item.logo) { mutableStateOf(false) }
     if (failed) { asText(); return }
@@ -909,8 +980,15 @@ private fun Dots(total: Int, current: Int, mode: String, max: Int, s: Float, mod
             Row(horizontalArrangement = Arrangement.spacedBy((4.5f * s).dp), verticalAlignment = Alignment.CenterVertically) {
                 for (i in 0 until count) {
                     val active = start + i == current
-                    val w by animateDpAsState(if (active) (17 * s).dp else (4.5f * s).dp, spring(Spring.DampingRatioMediumBouncy, 500f), label = "dot")
-                    Box(Modifier.width(w).height((4.5f * s).dp).clipR((3 * s).dp).background(Color.White.copy(alpha = if (active) 1f else 0.45f)))
+                    val w = animateDpAsState(if (active) (17 * s).dp else (4.5f * s).dp, spring(Spring.DampingRatioMediumBouncy, 500f), label = "dot")
+                    // The springing width is read while laying out: the dots are re-measured, never recomposed, per frame.
+                    Box(
+                        Modifier.layout { m, c ->
+                            val px = w.value.roundToPx()
+                            val p = m.measure(c.copy(minWidth = px, maxWidth = px))
+                            layout(p.width, p.height) { p.place(0, 0) }
+                        }.height((4.5f * s).dp).clipR((3 * s).dp).background(Color.White.copy(alpha = if (active) 1f else 0.45f)),
+                    )
                 }
             }
         }
@@ -1208,13 +1286,18 @@ private fun FocusColorArt(art: Art?, label: String, s: Float, litState: androidx
     // All three layers stay composed; only their alpha changes, read while drawing (no recomposition).
     Box(Modifier.fillMaxSize()) {
         // Light: soft frosted white (not paper white). Dark: near-black glass.
-        Box(Modifier.fillMaxSize().graphicsLayer { alpha = litState.value }
+        // Each layer is a single draw, so ModulateAlpha (opacity applied to that draw, no offscreen texture while it
+        // fades) gives the same pixels as the default offscreen layer.
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = litState.value; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha }
             .background(if (dark) Color(0xF0141416) else Color(0xE6E4E4EA)))
         Image(bm, label, colorFilter = if (art.transparent) (if (restOnLight) blackGlyph else whiteGlyph) else grayscale, contentScale = scale,
             filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
-            modifier = mod.graphicsLayer { alpha = (1f - litState.value) * if (art.transparent) 0.92f else 0.75f })
+            modifier = mod.graphicsLayer {
+                alpha = (1f - litState.value) * if (art.transparent) 0.92f else 0.75f
+                compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+            })
         Image(if (dark) bm else art.onLight, label, contentScale = scale, filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
-            modifier = mod.graphicsLayer { alpha = litState.value })
+            modifier = mod.graphicsLayer { alpha = litState.value; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha })
     }
 }
 
@@ -1421,14 +1504,24 @@ private fun FolderOverlay(
     LaunchedEffect(Unit) { shown = true }
 
     val outer = LocalGlassEnv.current
-    val env = outer.copy(bmp = outer.heavy ?: outer.bmp, sharp = outer.heavy ?: outer.sharp, wobble = 0f, prevBmp = null, prevSharp = null, mix = null, veil = null, sharpIsPage = false)
+    // The folder's glass shows the heavily blurred page, still read only while drawing.
+    val folderPics = remember(outer.pics) {
+        androidx.compose.runtime.derivedStateOf {
+            val p = outer.pics.value
+            GlassPics(bmp = p.heavy ?: p.bmp, sharp = p.heavy ?: p.sharp, heavy = p.heavy)
+        }
+    }
+    val env = outer.copy(pics = folderPics, wobble = 0f, mix = null, veil = null)
     CompositionLocalProvider(LocalGlassEnv provides env) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        // Blurred page and its dimming in one pass.
-        val bg = env.bmp
-        if (bg != null) Image(bg, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
-            colorFilter = ColorFilter.tint(Color.Black.copy(alpha = 0.45f), BlendMode.SrcAtop))
-        else Box(Modifier.fillMaxSize().background(Color(0xFF101014)))
+        // Blurred page and its dimming (the pictures are opaque: a black rect on top equals the old SrcAtop tint).
+        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+            val bg = folderPics.value.bmp
+            if (bg != null) {
+                drawCropped(bg, 1f, androidx.compose.ui.graphics.FilterQuality.Low)
+                drawRect(Color.Black.copy(alpha = 0.45f))
+            } else drawRect(Color(0xFF101014))
+        }
         AnimatedVisibility(shown, enter = fadeIn(tween(160))) {
             Column(Modifier.fillMaxWidth(0.9f), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Apps", color = Color.White, fontSize = (26 * s).sp, fontWeight = FontWeight.Light, modifier = Modifier.padding(bottom = (12 * s).dp))

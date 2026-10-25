@@ -661,6 +661,7 @@ private fun AboutPane(app: GlassApp, s: Float, onApp: (com.glasslauncher.tv.data
             add(Act("Frost-flix $version", "Based on Glassio by mohammadmrh12 (GPL-3.0), no self-updates", "", onLong = { showMemory = !showMemory }) {})
             if (showMemory) {
                 add(Note("Memory now · " + memory.ifBlank { "measuring…" }))
+                add(Note(com.glasslauncher.tv.FrameStats.describe()))
                 add(Note(app.lastBackground.ifBlank { "Memory in the background: not measured yet (it is noted ~5 s after another app comes to the front)" }))
             }
             add(Note("Made by Mohammad · Fonts: Inter (SIL OFL) · Weather: Open-Meteo · This product uses the TMDB API but is not endorsed or certified by TMDB."))

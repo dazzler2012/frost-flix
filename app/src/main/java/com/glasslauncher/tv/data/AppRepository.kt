@@ -162,7 +162,7 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
         val box = tileBox()
         val key = cacheKey(e, box)
         cache.get(key)?.let { return it }
-        return withContext(Dispatchers.Default) {
+        return withContext(iconDispatcher) {
             runCatching {
                 val custom = icons.fileFor(e.pkg)
                 var transparent: Boolean
@@ -201,6 +201,11 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
             }.getOrNull()
         }
     }
+
+    // Icons are made two at a time: on return to the home screen all of them are made again, and with every core
+    // busy decoding them the first frames of the screen were late.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val iconDispatcher = Dispatchers.Default.limitedParallelism(2)
 
     /** Same test as the dock: wider than 1.3:1 is a banner. */
     private fun isWide(w: Int, h: Int) = w > h * 1.3f

@@ -44,13 +44,17 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         if (images == null) show()
+        FrameStats.start(this)
     }
 
     override fun onStop() {
         super.onStop()
+        FrameStats.counting = false
+        FrameStats.stop(this)
         // Removing the ComposeView from the window disposes its composition (the default strategy).
         findViewById<android.view.ViewGroup>(android.R.id.content)?.removeAllViews()
-        images?.clear()
+        // Also cancels the preloads and glass copies still running for it (downloads included).
+        images?.stop()
         images = null
     }
 
@@ -67,6 +71,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             // A launcher never exits on Back; it just returns to its home view.
             BackHandler(enabled = true) { screen = Screen.Home }
+            // Frames are counted for the home screen only (not while Settings covers it).
+            LaunchedEffect(Unit) { androidx.compose.runtime.snapshotFlow { screen }.collect { FrameStats.counting = it == Screen.Home } }
             LaunchedEffect(Unit) {
                 while (true) {
                     delay(10_000)
@@ -112,6 +118,33 @@ class MainActivity : ComponentActivity() {
     override fun onUserInteraction() {
         lastInput = System.currentTimeMillis()
         (application as GlassApp).touch()
+    }
+
+    /** When the last D-pad key event was let through (uptime ms). */
+    private var lastDpad = 0L
+
+    /**
+     * Holding a D-pad key repeats it about 20 times a second. Each step moves focus or changes the slide and
+     * starts work (recomposition, picture loads); when the UI thread falls behind, the repeats queue up and the
+     * screen keeps moving after the key is released. Repeats are let through at most every [REPEAT_MS], and a
+     * repeat that waited more than [STALE_MS] in the queue is dropped. The first press always goes through.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val dpad = when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> true
+            else -> false
+        }
+        if (dpad && event.action == KeyEvent.ACTION_DOWN) {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (event.repeatCount > 0 && (now - event.eventTime > STALE_MS || now - lastDpad < REPEAT_MS)) return true
+            lastDpad = now
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    private companion object {
+        const val REPEAT_MS = 100L
+        const val STALE_MS = 120L
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {

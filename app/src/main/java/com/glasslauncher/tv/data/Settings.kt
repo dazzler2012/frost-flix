@@ -66,7 +66,19 @@ class Settings(private val ctx: Context) {
     /** Which picture a title uses: main | second | best (highest resolution) | addon (the add-on's own). */
     var artChoice: String get() = s("artChoice", "main"); set(v) = putS("artChoice", v)
     /** Per-title picture picked with a long press on the carousel: "key\turl" lines. */
-    fun artPick(key: String): String? = list("artPicks").firstOrNull { it.startsWith("$key\t") }?.substringAfter('\t')
+    fun artPick(key: String): String? = artPicks()[key]
+    // The carousel asks for every slide it prepares on every recomposition: parse the stored lines once per change.
+    private var picksRaw: String? = null
+    private var picksMap: Map<String, String> = emptyMap()
+    private fun artPicks(): Map<String, String> {
+        val raw = s("artPicks", "")
+        if (raw != picksRaw) {
+            picksMap = raw.split('\n').map { it.trim() }.filter { '\t' in it }
+                .associate { it.substringBefore('\t') to it.substringAfter('\t') }
+            picksRaw = raw
+        }
+        return picksMap
+    }
     fun setArtPick(key: String, url: String?) {
         val rest = list("artPicks").filterNot { it.startsWith("$key\t") }
         putList("artPicks", if (url == null) rest else (rest + "$key\t$url").takeLast(300))
@@ -86,7 +98,9 @@ class Settings(private val ctx: Context) {
     private fun applyPreset(tier: String) {
         when (tier) {
             "performance" -> { imageQuality = "high"; prefetchDepth = 2; transitionMs = 250; refraction = 0; heroGallery = false; glassRes = 480 }
-            "balanced" -> { imageQuality = "max"; prefetchDepth = 4; transitionMs = 450; refraction = 6; heroGallery = true; galleryShots = 2; glassRes = 480 }
+            // Balanced (Auto on 3-4 GB boxes such as the Shield TV Pro): 3 slides prepared ahead and a 350 ms
+            // crossfade (were 4 and 450 ms) keep less decoding and fewer animated frames on 4-core boxes.
+            "balanced" -> { imageQuality = "max"; prefetchDepth = 3; transitionMs = 350; refraction = 6; heroGallery = true; galleryShots = 2; glassRes = 480 }
             "quality" -> { imageQuality = "max"; prefetchDepth = 6; transitionMs = 700; refraction = 14; heroGallery = true; galleryShots = 3; glassRes = 720 }
         }
     }

@@ -121,6 +121,26 @@ class ImageCaches(glassRes: Int) {
     fun peekHalf(b: ImageBitmap?): ImageBitmap? = b?.let { synchronized(half) { half[it] } }
     fun putHalf(b: ImageBitmap, h: ImageBitmap) { synchronized(half) { half[b] = h } }
 
+    // ---- Preloads started with ImageLoader.enqueue: they belong to the image loader, not to the screen, so they
+    // would keep downloading after ON_STOP. [stop] disposes the ones still running.
+    private val preloads = HashSet<coil3.request.Disposable>()
+
+    /** Remembers a preload so [stop] can cancel it; finished ones are dropped on the next call. */
+    fun track(d: coil3.request.Disposable) = synchronized(preloads) {
+        preloads.removeAll { it.isDisposed || it.job.isCompleted }
+        preloads.add(d)
+    }
+
+    /**
+     * Screen stopped: cancels every preload and glass copy still being fetched or made for it. Nothing this
+     * screen started keeps using the network or the CPU behind another app.
+     */
+    fun stop() {
+        synchronized(preloads) { preloads.forEach { it.dispose() }; preloads.clear() }
+        synchronized(pending) { pending.values.forEach { it.cancel() }; pending.clear() }
+        clear()
+    }
+
     /** Drops everything (screen stopped, or the TV is low on memory). Bitmaps on screen are never recycled here. */
     fun clear() {
         glass.evictAll()
@@ -131,11 +151,20 @@ class ImageCaches(glassRes: Int) {
     /** "glass 9 · baked 2 · half 2", for the Memory line. */
     fun describe(): String = "glass ${glass.size() / (1024 * 1024)} MB · baked ${synchronized(this) { baked.size }} · half ${synchronized(half) { half.size }}"
 
-    private companion object {
+    companion object {
+        /**
+         * Baking backdrops and their half-size copies: two threads below normal priority (nice 5, still in the
+         * foreground CPU group), so a bake never takes CPU time the UI thread or the render thread wants, and two
+         * neighbouring slides can still be baked at once. Holds no bitmaps.
+         */
+        val bakeDispatcher: kotlinx.coroutines.CoroutineDispatcher = java.util.concurrent.Executors.newFixedThreadPool(2) { r ->
+            Thread({ android.os.Process.setThreadPriority(5); r.run() }, "backdrop-bake").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+
         // One low-priority worker: blurring never competes with drawing the screen. Holds no bitmaps.
-        val worker: java.util.concurrent.ExecutorService = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        private val worker: java.util.concurrent.ExecutorService = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
             Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); r.run() }, "glass-blur").apply { isDaemon = true }
         }
-        val blurScope = CoroutineScope(SupervisorJob() + worker.asCoroutineDispatcher())
+        private val blurScope = CoroutineScope(SupervisorJob() + worker.asCoroutineDispatcher())
     }
 }

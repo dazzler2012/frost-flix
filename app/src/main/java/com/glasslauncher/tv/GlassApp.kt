@@ -19,6 +19,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import coil3.request.allowHardware
+import coil3.bitmapFactoryMaxParallelism
+import coil3.serviceLoaderEnabled
+import kotlinx.coroutines.asCoroutineDispatcher
 
 class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
     /**
@@ -30,6 +33,13 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
     override fun newImageLoader(context: coil3.PlatformContext): coil3.ImageLoader =
         coil3.ImageLoader.Builder(context)
             .allowHardware(false)
+            // Our own HTTP client (instead of the one Coil makes), so its connections can be closed on ON_STOP.
+            .components { add(coil3.network.okhttp.OkHttpNetworkFetcherFactory(callFactory = { imageClient })) }
+            .serviceLoaderEnabled(false)
+            // Decoding big pictures (4K originals) takes whole CPU cores: at most two at once, below normal
+            // priority, so the UI thread and the render thread always get a core.
+            .decoderCoroutineContext(decodeDispatcher)
+            .bitmapFactoryMaxParallelism(2)
             .memoryCache { coil3.memory.MemoryCache.Builder().maxSizePercent(context, 0.15).build() }
             .diskCache {
                 coil3.disk.DiskCache.Builder()
@@ -56,43 +66,49 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         if (::apps.isInitialized) apps.releaseArt()
     }
 
+    /** The HTTP client of the image loader (pictures, logos). Idle connections are closed in the background. */
+    private val imageClientLazy = lazy { okhttp3.OkHttpClient() }
+    val imageClient: okhttp3.OkHttpClient by imageClientLazy
+    private val decodeDispatcher: kotlinx.coroutines.CoroutineDispatcher by lazy {
+        java.util.concurrent.Executors.newFixedThreadPool(2) { r ->
+            Thread({ android.os.Process.setThreadPriority(5); r.run() }, "image-decode").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+    }
+
+    /**
+     * Stops the image loader's network use: cancels its calls still running and closes its pooled connections
+     * (TLS sockets). Closing sockets is I/O: call off the main thread.
+     */
+    private fun closeImageConnections() {
+        if (!imageClientLazy.isInitialized()) return
+        imageClient.dispatcher.cancelAll()
+        imageClient.connectionPool.evictAll()
+    }
+
     /** The carousel slide on screen, kept across MainActivity's stop/start rebuild (a number, no picture). */
     @Volatile var heroIndex = 0
 
-    /**
-     * The Memory line as measured ~5 s after Frost-flix went to the background, then the GPU numbers before and
-     * after the GPU cache was released (~35 s) (see [onBackground]).
-     */
+    /** The Memory line as measured ~5 s after Frost-flix went to the background (see [onBackground]). */
     @Volatile var lastBackground = ""
     private var backgroundJob: kotlinx.coroutines.Job? = null
 
     /**
-     * Everything is unreferenced by now (MainActivity dropped its screen); release the app caches, then
-     * collect, so the pixels are really freed while another app plays. Then note the numbers for Settings.
-     * Last, release the GPU textures the render thread still caches ([MemoryStats.releaseGpu]): it only frees
-     * what was not used for 30 s, so it waits until 35 s after the screen went away.
+     * Everything is unreferenced by now (MainActivity dropped its screen); release the app caches and close the
+     * image loader's connections, then collect, so the pixels are really freed (and closed sockets finalized)
+     * while another app plays. Then note the numbers for Settings.
      */
     private fun onBackground() {
         backgroundJob?.cancel()
         releaseImages()
         backgroundJob = scope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { if (!_foreground.value) runCatching { closeImageConnections() } }
             // Give the render thread a moment to let go of the last frame's bitmaps.
             kotlinx.coroutines.delay(1500)
             MemoryStats.collect()
             kotlinx.coroutines.delay(3500)
             if (_foreground.value) return@launch
-            val fmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-            val before = MemoryStats.gpu()
-            lastBackground = "In the background at ${fmt.format(java.util.Date())}: " + MemoryStats.read(this@GlassApp, pss = true) + " · GPU: $before"
-            kotlinx.coroutines.delay(30_000)
-            if (_foreground.value) return@launch
-            val released = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                !_foreground.value && MemoryStats.releaseGpu()
-            }
-            if (!released) { lastBackground += " · GPU cache release: not available"; return@launch }
-            kotlinx.coroutines.delay(1000)
-            if (_foreground.value) return@launch
-            lastBackground += " · GPU cache released at ${fmt.format(java.util.Date())}, then: ${MemoryStats.gpu()}"
+            val at = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+            lastBackground = "In the background at $at: " + MemoryStats.read(this@GlassApp, pss = true) + " · GPU: " + MemoryStats.gpu()
         }
     }
 
