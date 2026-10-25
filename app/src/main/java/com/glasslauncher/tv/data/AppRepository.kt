@@ -11,6 +11,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -111,12 +112,13 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
         (pm.getLeanbackLaunchIntentForPackage(e.pkg) ?: pm.getLaunchIntentForPackage(e.pkg))
             ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-    // Decoded dock artwork, in KB. Counts both copies (a transparent icon also has a darkened one); emptied by
-    // [releaseArt] when Frost-flix goes to the background, and decoded again on return.
-    private val cache = object : LruCache<String, Art>(48 * 1024) {
+    // Decoded dock artwork, in KB. Counts both copies (a transparent icon may also have a darkened one); emptied
+    // by [releaseArt] when Frost-flix goes to the background, and decoded again on return. Icons are decoded at
+    // the size a focused tile draws them (~0.1-0.3 MB each at 1080p), so 24 MB holds far more than one dock.
+    private val cache = object : LruCache<String, Art>(24 * 1024) {
         override fun sizeOf(key: String, value: Art): Int {
-            val main = value.bmp.width * value.bmp.height * 4
-            val second = if (value.onLight !== value.bmp) value.onLight.width * value.onLight.height * 4 else 0
+            val main = value.bmp.asAndroidBitmap().allocationByteCount
+            val second = if (value.onLight !== value.bmp) value.onLight.asAndroidBitmap().allocationByteCount else 0
             return ((main + second) / 1024).coerceAtLeast(1)
         }
     }
@@ -124,34 +126,116 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
     /** Drops every decoded icon (app in the background). Icons on screen are never recycled here. */
     fun releaseArt() = cache.evictAll()
 
-    private fun cacheKey(e: AppEntry) = "${settings.iconPack}|${icons.rev.intValue}|${e.pkg}"
+    /** Width in pixels of the screen the dock is laid out on; the home screen sets it from its own size. */
+    @Volatile var screenWidthPx: Int = ctx.resources.displayMetrics.let { maxOf(it.widthPixels, it.heightPixels) }
+
+    /**
+     * A dock tile in pixels, as DockMetrics in HomeScreen lays it out: 136/960 of the screen width × "Dock size",
+     * 1.6:1, and 8/960 of the screen width of padding around an icon that is fitted (not cropped). All × 1.14,
+     * the largest scale of a focused tile, so the focused icon is never enlarged. Folder and Settings icons
+     * are drawn smaller than this.
+     */
+    private class TileBox(val w: Int, val h: Int, val pad: Int)
+    private fun tileBox(): TileBox {
+        val sw = screenWidthPx.coerceAtLeast(320).toFloat()
+        val w = sw * 136f / 960f * settings.dockScale * 1.14f
+        return TileBox(kotlin.math.ceil(w).toInt(), kotlin.math.ceil(w / 1.6f).toInt(), (sw * 8f / 960f * 1.14f).toInt())
+    }
+
+    /**
+     * Pixel size an [iw]×[ih] picture is drawn at on a tile: a wide opaque banner fills the tile (Crop), anything
+     * else is fitted inside the padding (Fit). Same rules as IconArt / FocusColorArt in HomeScreen.
+     */
+    private fun drawnSize(iw: Int, ih: Int, fill: Boolean, b: TileBox): Pair<Int, Int> {
+        val sc = if (fill) maxOf(b.w / iw.toFloat(), b.h / ih.toFloat())
+        else minOf((b.w - 2 * b.pad) / iw.toFloat(), (b.h - 2 * b.pad) / ih.toFloat())
+        return kotlin.math.ceil(iw * sc).toInt().coerceAtLeast(1) to kotlin.math.ceil(ih * sc).toInt().coerceAtLeast(1)
+    }
+
+    private fun cacheKey(e: AppEntry, b: TileBox = tileBox()) = "${settings.iconPack}|${icons.rev.intValue}|${b.w}x${b.h}|${e.pkg}"
 
     /** Already-decoded artwork, available instantly (no flicker when the dock recomposes). */
     fun cachedArtwork(e: AppEntry): Art? = cache.get(cacheKey(e))
 
     /** Custom icon, else the icon pack's, else the app's banner, else its icon. */
     suspend fun artwork(e: AppEntry): Art? {
-        val key = cacheKey(e)
+        val box = tileBox()
+        val key = cacheKey(e, box)
         cache.get(key)?.let { return it }
         return withContext(Dispatchers.Default) {
             runCatching {
                 val custom = icons.fileFor(e.pkg)
-                val bmp: Bitmap = if (custom.exists()) {
-                    android.graphics.BitmapFactory.decodeFile(custom.absolutePath) ?: error("bad custom icon")
+                var transparent: Boolean
+                var bmp: Bitmap
+                if (custom.exists()) {
+                    bmp = decodeFile(custom, box) ?: error("bad custom icon")
+                    transparent = isTransparent(bmp)
+                    val (tw, th) = drawnSize(bmp.width, bmp.height, isWide(bmp.width, bmp.height) && !transparent, box)
+                    // Only ever made smaller: a small custom icon is enlarged when drawn, as before.
+                    if (tw < bmp.width) bmp = shrink(bmp, tw, th).also { if (it !== bmp) bmp.recycle() }
                 } else {
                     val pack = settings.iconPack
                     val d: Drawable = (if (pack.isNotEmpty()) packs.drawableFor(pack, e.component) else null)
                         ?: pm.getActivityInfo(e.component, 0).let { ai -> hiRes(ai) ?: ai.loadBanner(pm) ?: ai.loadIcon(pm) }
-                    val iw = d.intrinsicWidth; val ih = d.intrinsicHeight
-                    val wide = iw > 0 && ih > 0 && iw.toFloat() / ih > 1.3f
-                    d.toBitmap(if (wide) 640 else 256)
+                    val iw = d.intrinsicWidth.takeIf { it > 0 } ?: 256
+                    val ih = d.intrinsicHeight.takeIf { it > 0 } ?: 256
+                    val wide = isWide(iw, ih)
+                    // A wide picture is first drawn at the (larger) fill size; if it turns out to be see-through
+                    // it is fitted instead, so it is drawn again at that size.
+                    val (tw, th) = drawnSize(iw, ih, wide, box)
+                    bmp = d.render(iw, tw, th)
+                    transparent = isTransparent(bmp)
+                    if (wide && transparent) {
+                        val (fw, fh) = drawnSize(iw, ih, false, box)
+                        bmp.recycle()
+                        bmp = d.render(iw, fw, fh)
+                    }
                 }
-                val transparent = isTransparent(bmp)
+                val light = isLight(bmp)
+                // A transparent icon's darkened copy is only kept when darkening changed something.
+                val dark = if (transparent) darkenWhites(bmp) else null
+                if (!transparent && isOpaque(bmp)) bmp = to565(bmp).also { bmp.recycle() }
                 val main = com.glasslauncher.tv.ui.BitmapTracker.track(bmp.asImageBitmap(), "icons")
-                Art(main, transparent, isLight(bmp), if (transparent) com.glasslauncher.tv.ui.BitmapTracker.track(darkenWhites(bmp).asImageBitmap(), "icons") else main)
+                Art(main, transparent, light, dark?.let { com.glasslauncher.tv.ui.BitmapTracker.track(it.asImageBitmap(), "icons") } ?: main)
                     .also { cache.put(key, it) }
             }.getOrNull()
         }
+    }
+
+    /** Same test as the dock: wider than 1.3:1 is a banner. */
+    private fun isWide(w: Int, h: Int) = w > h * 1.3f
+
+    /** A custom icon file, decoded with inSampleSize to the smallest power-of-two step not below its drawn size. */
+    private fun decodeFile(f: java.io.File, box: TileBox): Bitmap? {
+        val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(f.absolutePath, o)
+        if (o.outWidth <= 0 || o.outHeight <= 0) return null
+        // Fill size: the larger of the two possible drawn sizes, so sampling never goes below either.
+        val (tw, th) = drawnSize(o.outWidth, o.outHeight, isWide(o.outWidth, o.outHeight), box)
+        var sample = 1
+        while (o.outWidth / (sample * 2) >= tw && o.outHeight / (sample * 2) >= th) sample *= 2
+        return android.graphics.BitmapFactory.decodeFile(f.absolutePath, android.graphics.BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        })
+    }
+
+    /** True when every pixel is fully opaque: the icon can be stored as RGB_565 (half the memory). */
+    private fun isOpaque(b: Bitmap): Boolean {
+        if (!b.hasAlpha()) return true
+        val w = b.width; val row = IntArray(w)
+        for (y in 0 until b.height) {
+            b.getPixels(row, 0, w, 0, y, w, 1)
+            for (p in row) if ((p ushr 24) != 255) return false
+        }
+        return true
+    }
+
+    /** RGB_565 copy, dithered so gradients in banners don't band. */
+    private fun to565(src: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.RGB_565)
+        Canvas(out).drawBitmap(src, 0f, 0f, android.graphics.Paint(android.graphics.Paint.DITHER_FLAG))
+        return out
     }
 
     /**
@@ -166,11 +250,12 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
         if (id == 0) null else res.getDrawableForDensity(id, android.util.DisplayMetrics.DENSITY_XXHIGH, null)
     }.getOrNull()
 
-    /** White / light-grey parts (lettering) turn near-black; coloured parts keep their colour. */
-    private fun darkenWhites(src: Bitmap): Bitmap {
+    /** White / light-grey parts (lettering) turn near-black; coloured parts keep their colour. Null: nothing to darken. */
+    private fun darkenWhites(src: Bitmap): Bitmap? {
         val b = src.copy(Bitmap.Config.ARGB_8888, true)
         val w = b.width; val h = b.height
         val px = IntArray(w * h); b.getPixels(px, 0, w, 0, 0, w, h)
+        var changed = false
         for (i in px.indices) {
             val p = px[i]; val a = p ushr 24
             if (a == 0) continue
@@ -179,8 +264,10 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
             if (mx - mn < 48 && mn > 150) {
                 val v = 0x1C + (255 - mn) / 6
                 px[i] = (a shl 24) or (v shl 16) or (v shl 8) or (v + 2).coerceAtMost(255)
+                changed = true
             }
         }
+        if (!changed) { b.recycle(); return null }
         b.setPixels(px, 0, w, 0, 0, w, h)
         return b
     }
@@ -220,11 +307,34 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
         return total > 0 && clear * 100 / total >= 35
     }
 
-    private fun Drawable.toBitmap(targetW: Int): Bitmap {
-        val iw = intrinsicWidth.takeIf { it > 0 } ?: targetW
-        val ih = intrinsicHeight.takeIf { it > 0 } ?: targetW
-        val scale = targetW.toFloat() / iw
-        val w = targetW; val h = (ih * scale).toInt().coerceAtLeast(1)
+    /**
+     * Draws the drawable at [tw]×[th]. A picture with more pixels than that ([iw] wide) is drawn at a power-of-two
+     * multiple first and halved down: one big bilinear step would alias lettering in banners.
+     */
+    private fun Drawable.render(iw: Int, tw: Int, th: Int): Bitmap {
+        var k = 1
+        while (tw * k * 2 <= iw && k < 8) k *= 2
+        val b = toBitmap(tw * k, th * k)
+        return if (k == 1) b else shrink(b, tw, th).also { if (it !== b) b.recycle() }
+    }
+
+    /** Scales [src] down to [tw]×[th] in halving steps (each one an even 2×2 average), then one last step. */
+    private fun shrink(src: Bitmap, tw: Int, th: Int): Bitmap {
+        var b = src
+        while (b.width / 2 >= tw && b.height / 2 >= th) {
+            val n = Bitmap.createScaledBitmap(b, b.width / 2, b.height / 2, true)
+            if (n !== b && b !== src) b.recycle()
+            b = n
+        }
+        if (b.width != tw || b.height != th) {
+            val n = Bitmap.createScaledBitmap(b, tw, th, true)
+            if (n !== b && b !== src) b.recycle()
+            b = n
+        }
+        return b
+    }
+
+    private fun Drawable.toBitmap(w: Int, h: Int): Bitmap {
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         setBounds(0, 0, w, h); draw(c)

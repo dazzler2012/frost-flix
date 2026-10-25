@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d7`. `versionCode` is 31 (upstream 25).
+- `versionName` changed to `1.9.3-d8`. `versionCode` is 32 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -183,3 +183,13 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 - **Dock icons:** their cache now counts both copies of an icon (a transparent icon also has a darkened copy), is capped at 48 MB (was 64 MB, counting only one copy), and is emptied in the background. The icons are decoded again off the main thread on return.
 - **Freed memory is really freed:** bitmap pixels are only freed when the garbage collector collects their Java object, and an idle app in the background may not collect for a long time. About 1.5 s after going to the background, Frost-flix now runs a GC (`Runtime.gc()`, finalization, `Runtime.gc()`).
 - **Hidden Memory line:** Settings → About, hold OK on the version. Shows the native heap in use (`Debug.getNativeHeapAllocatedSize`) and its total size, Java heap used, total PSS, the bitmaps Frost-flix tracks (count and MB, by kind: backdrop, glass, icons, qr) and Coil's memory cache. A second line shows the same numbers as measured about 5 s after Frost-flix last went to the background. Refreshed every 3 s while shown. Tracking uses weak references, so it never keeps a bitmap alive.
+
+## Icons and native memory (1.9.3-d8)
+
+- **Icons decoded at their drawn size:** dock, folder and Settings icons were drawn into bitmaps 640 px wide (banners) or 256 px (icons), ~0.9 MB each. They are now made at the size a focused dock tile draws them: the tile's size in pixels (from the screen width and "Dock size") × 1.14, the largest focus scale. A wide opaque banner fills the tile (as it is cropped on screen); every other icon fits inside the tile's padding. At 1080p and full dock size that is about 347×195 for a banner. Large app pictures are drawn at a power-of-two multiple and halved down, so lettering stays sharp. Custom icon files are decoded with `inSampleSize`.
+- **RGB_565 for opaque icons:** an icon with no see-through pixel is kept as RGB_565 (dithered; half the memory). Icons with transparency stay ARGB_8888.
+- **Darkened copy only when needed:** a transparent icon's darkened copy (for light plates) is kept only if darkening changed a pixel; otherwise both looks use the same bitmap.
+- **Icon cache:** capped at 24 MB (was 48 MB), counted by the bitmaps' real size.
+- **Freed native memory given back:** about 2 s after going to the background, after the GC, Frost-flix calls `mallopt(M_PURGE)` (Android 9+) through a tiny JNI library, `libheappurge` (one C function, `app/src/main/cpp`). The allocator then returns the pages of freed memory to the system. The build now uses the NDK and CMake that AGP picks.
+- **Memory line:** the background line now ends with the purge result, e.g. "M_PURGE (done, Scudo): PSS … → … MB, heap … → … MB". "done" means the allocator accepted it; the allocator name is read from the process's memory map names.
+- **Baked backdrops stay software bitmaps (not hardware):** the half-size copy the clear glass samples is made from the baked backdrop on the CPU, which a hardware bitmap doesn't allow without a GPU read-back. On the Shield the GPU uses the same RAM, so a hardware bitmap would mostly move the bytes from the native heap to "Graphics" in PSS. And in the background no backdrop exists any more (since 1.9.3-d7), so it would not lower that number.

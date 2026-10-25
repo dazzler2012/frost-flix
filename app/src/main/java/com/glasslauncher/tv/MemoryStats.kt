@@ -44,4 +44,16 @@ object MemoryStats {
         System.runFinalization()
         Runtime.getRuntime().gc()
     }
+
+    /**
+     * Returns the native heap's free pages to the system ([NativeHeap.purge]) and describes the result with
+     * the PSS and native heap size before and after. Reads /proc twice: call off the main thread.
+     */
+    fun purge(): String {
+        val pss0 = Debug.getPss() * 1024; val heap0 = Debug.getNativeHeapSize()
+        val r = NativeHeap.purge()
+        val pss1 = Debug.getPss() * 1024; val heap1 = Debug.getNativeHeapSize()
+        val result = when (r) { 1 -> "done"; 0 -> "not supported"; else -> "not available" }
+        return "M_PURGE ($result, ${NativeHeap.allocator}): PSS ${mb(pss0)} → ${mb(pss1)} MB, heap ${mb(heap0)} → ${mb(heap1)} MB"
+    }
 }

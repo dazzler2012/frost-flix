@@ -294,6 +294,8 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         val rootH = with(density) { maxHeight.roundToPx() }
         val s = maxWidth.value / 960f
         val screenHdp = maxHeight.value
+        // Dock icons are decoded at the size the tiles draw them, which follows the screen width.
+        androidx.compose.runtime.SideEffect { app.apps.screenWidthPx = rootW }
         val veil = animateFloatAsState(if (expanded && !folderOpen) 1f else 0f, tween(320), label = "veil")
         // Clear glass shows the page picture itself (full resolution, scrims included); the small
         // glass copy (ImageCaches) is only the fallback before the first picture is on screen.
@@ -1342,7 +1344,8 @@ private fun DockTile(
     val rev = app.icons.rev.intValue
     val pack = app.settings.iconPack
     val style = app.settings.tileStyle
-    val art by produceState(app.apps.cachedArtwork(entry), entry.pkg, pack, rev) { value = app.apps.artwork(entry) }
+    // Size keys too: icons are decoded at the tile's drawn size.
+    val art by produceState(app.apps.cachedArtwork(entry), entry.pkg, pack, rev, s, app.settings.dockScale) { value = app.apps.artwork(entry) }
     val solid = style == "amoled" || style == "bow"
     val colorOnFocus = app.settings.focusColor
     TileFrame(s, radius, moving, label, alwaysLabel, modifier, onFocus, onMoveKey, onClick, onLong, solid, app.settings.tileLift, app.settings.edgeBounce, edges) { focused, r ->
@@ -1369,7 +1372,7 @@ private fun FolderTile(
                 preview.chunked(3).forEach { row ->
                     Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy((4 * s).dp)) {
                         row.forEach { e ->
-                            val art by produceState(app.apps.cachedArtwork(e), e.pkg, app.settings.iconPack, app.icons.rev.intValue) { value = app.apps.artwork(e) }
+                            val art by produceState(app.apps.cachedArtwork(e), e.pkg, app.settings.iconPack, app.icons.rev.intValue, s, app.settings.dockScale) { value = app.apps.artwork(e) }
                             Box(Modifier.weight(1f).fillMaxHeight().clipR((4 * s).dp)
                                 .background(if (style == "bow") Color(0xFFE2E2E6) else Color.White.copy(alpha = 0.06f))) {
                                 IconArt(art, "", style, s * 0.35f)

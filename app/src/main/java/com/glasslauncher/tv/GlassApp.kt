@@ -70,10 +70,15 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
             // Give the render thread a moment to let go of the last frame's bitmaps.
             kotlinx.coroutines.delay(1500)
             MemoryStats.collect()
-            kotlinx.coroutines.delay(3500)
+            // The collected bitmaps' pixels are freed right after the GC; then the allocator still holds
+            // their pages. Hand them back to the system (mallopt M_PURGE).
+            kotlinx.coroutines.delay(500)
+            if (_foreground.value) return@launch
+            val purge = MemoryStats.purge()
+            kotlinx.coroutines.delay(3000)
             if (_foreground.value) return@launch
             val at = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-            lastBackground = "In the background at $at: " + MemoryStats.read(this@GlassApp, pss = true)
+            lastBackground = "In the background at $at: " + MemoryStats.read(this@GlassApp, pss = true) + " · $purge"
         }
     }
 
