@@ -104,6 +104,7 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 - **Artwork:** from the meta resource of your own add-ons (Cinemeta is skipped), then TMDB when a token is set. The Cinemeta lookups are not back.
 - **Play:** opens the title in Nuvio with the existing launch code (NuvioTV first).
 - **Network:** the only new host is `https://api.trakt.tv`.
+- **Redirect URI:** the token refresh sends `redirect_uri`, from `BuildConfig.TRAKT_REDIRECT_URI` (default `http://localhost`, override with `TRAKT_REDIRECT_URI` at build time). It is only sent as text to Trakt; Glassio never connects to it.
 - **Build:** the Client ID comes from the GitHub Actions secret `TRAKT_CLIENT_ID` and goes into `BuildConfig` at build time. It is not in the repo. Without it the page shows "Trakt not configured".
 - **Still removed:** "Open on what I just watched", the Nuvio Legacy log toggle, the pinned-image cache and the settings `continueJump` and `cwLegacy`.
 

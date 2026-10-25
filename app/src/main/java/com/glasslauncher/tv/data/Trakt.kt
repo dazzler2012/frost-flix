@@ -195,7 +195,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
             call("POST", "/oauth/token", JSONObject()
                 .put("client_id", clientId)
                 .put("refresh_token", t.refresh)
-                .put("redirect_uri", REDIRECT_URI)
+                .put("redirect_uri", BuildConfig.TRAKT_REDIRECT_URI)
                 .put("grant_type", "refresh_token"))
         }.getOrNull() ?: return t.takeIf { System.currentTimeMillis() < it.expiresAt } // offline: keep using a still-valid token
         if (r.code == 200) {
@@ -242,8 +242,6 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
 
     companion object {
         private const val API = "https://api.trakt.tv"
-        /** Redirect URI for apps without a browser redirect (device flow). Must be listed in the Trakt app settings. */
-        private const val REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob"
         private const val REFRESH_EARLY_MS = 24L * 3600 * 1000
         const val SIGN_IN_AGAIN = "Trakt sign-in expired. Sign in again."
     }

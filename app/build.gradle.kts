@@ -17,6 +17,10 @@ android {
         // Empty in a local build without it; the app then shows "Trakt not configured".
         val traktClientId = (System.getenv("TRAKT_CLIENT_ID") ?: "").trim().filter { it.isLetterOrDigit() }
         buildConfigField("String", "TRAKT_CLIENT_ID", "\"$traktClientId\"")
+        // Must match the redirect URI registered in the Trakt app exactly. Override with env TRAKT_REDIRECT_URI.
+        val traktRedirect = (System.getenv("TRAKT_REDIRECT_URI") ?: "").trim().filterNot { it == '"' || it == '\\' || it.isWhitespace() }
+            .ifBlank { "http://localhost" }
+        buildConfigField("String", "TRAKT_REDIRECT_URI", "\"$traktRedirect\"")
     }
     // Release signing comes only from environment variables (set by CI from repository secrets).
     // Without them the release APK is built unsigned. No keystore or password lives in this repo.

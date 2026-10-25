@@ -43,10 +43,11 @@ Add one more secret:
 | `TRAKT_CLIENT_ID` | the **Client ID** of your Trakt app |
 
 - Get it from your app in the Trakt developer portal. Only the Client ID is needed. Glassio never uses a Client Secret.
-- In the Trakt app settings, the redirect URI list must include `urn:ietf:wg:oauth:2.0:oob`. Glassio sends it when it renews the sign-in.
+- Glassio sends a redirect URI when it renews the sign-in. The default is `http://localhost`. The redirect URI registered in your Trakt app must match it **exactly** (same scheme, no trailing slash, no port). Otherwise renewing fails and you have to sign in again every 7 days.
+- To use a different redirect URI, add a repository secret or variable named `TRAKT_REDIRECT_URI` with the exact value. No code change is needed.
 - The ID is put into the APK at build time. It is never stored in this repository.
 - If the secret is missing, the build still works. The app then shows "Trakt not configured" on the Continue Watching page.
-- For a local build, set the environment variable `TRAKT_CLIENT_ID` before running Gradle. Don't write it into any file in the repo.
+- For a local build, set the environment variable `TRAKT_CLIENT_ID` (and `TRAKT_REDIRECT_URI` if it isn't `http://localhost`) before running Gradle. Don't write it into any file in the repo.
 
 ## 3. Make a release
 
