@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d6`. `versionCode` is 30 (upstream 25).
+- `versionName` changed to `1.9.3-d7`. `versionCode` is 31 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -175,3 +175,11 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 - The release job stops with an error if the tag is not `v` + `versionName` from `app/build.gradle.kts`.
 - Re-running the release job is safe: if the release already exists, its `frost-flix.apk` is replaced instead of failing.
 - CHANGES.md: the "Removed: adb client" section now says that the Trakt-based `ContinueWatching.kt` and three of its settings came back in 1.9.3-d3.
+
+## Background memory (1.9.3-d7)
+
+- **The home screen exists only while it is started.** On ON_STOP, MainActivity removes its screen from the window. That disposes the whole composition: remembered pictures, the slide's backdrop and glass, dock icons, dialogs and the render nodes that pointed at them. On ON_START it builds the screen again. The carousel comes back on the same slide; its pictures reload from the disk cache. Home pressed in another app still starts on the first slide. Settings, when it was open, comes back on its first page.
+- **No bitmaps in static fields any more.** The glass copies, baked backdrops and their half-size copies moved from the singletons `GlassCache`, `BakeCache` and `GlassHalf` into `ImageCaches`, one instance per started MainActivity, dropped on ON_STOP. The only app-scope image caches left are Coil's memory cache and the dock icons. Both are emptied when Frost-flix goes to the background and in `onTrimMemory` (UI hidden).
+- **Dock icons:** their cache now counts both copies of an icon (a transparent icon also has a darkened copy), is capped at 48 MB (was 64 MB, counting only one copy), and is emptied in the background. The icons are decoded again off the main thread on return.
+- **Freed memory is really freed:** bitmap pixels are only freed when the garbage collector collects their Java object, and an idle app in the background may not collect for a long time. About 1.5 s after going to the background, Frost-flix now runs a GC (`Runtime.gc()`, finalization, `Runtime.gc()`).
+- **Hidden Memory line:** Settings → About, hold OK on the version. Shows the native heap in use (`Debug.getNativeHeapAllocatedSize`) and its total size, Java heap used, total PSS, the bitmaps Frost-flix tracks (count and MB, by kind: backdrop, glass, icons, qr) and Coil's memory cache. A second line shows the same numbers as measured about 5 s after Frost-flix last went to the background. Refreshed every 3 s while shown. Tracking uses weak references, so it never keeps a bitmap alive.

@@ -43,18 +43,48 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
     val foreground: StateFlow<Boolean> = _foreground
     private var started = 0
 
-    /** Drops every large cached bitmap: page backdrops, glass copies and Coil's decoded pictures. */
+    /**
+     * Drops the app-scope image caches: Coil's decoded pictures and the dock icons. (The home screen's own
+     * backdrops and glass copies belong to MainActivity, which drops them with the screen on ON_STOP.)
+     */
     fun releaseImages() {
-        com.glasslauncher.tv.ui.releaseBitmaps()
         runCatching { coil3.SingletonImageLoader.get(this).memoryCache?.clear() }
+        if (::apps.isInitialized) apps.releaseArt()
+    }
+
+    /** The carousel slide on screen, kept across MainActivity's stop/start rebuild (a number, no picture). */
+    @Volatile var heroIndex = 0
+
+    /** The Memory line as measured ~5 s after Frost-flix went to the background (see [onBackground]). */
+    @Volatile var lastBackground = ""
+    private var backgroundJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Everything is unreferenced by now (MainActivity dropped its screen); release the app caches, then
+     * collect, so the pixels are really freed while another app plays. Then note the numbers for Settings.
+     */
+    private fun onBackground() {
+        backgroundJob?.cancel()
+        releaseImages()
+        backgroundJob = scope.launch {
+            // Give the render thread a moment to let go of the last frame's bitmaps.
+            kotlinx.coroutines.delay(1500)
+            MemoryStats.collect()
+            kotlinx.coroutines.delay(3500)
+            if (_foreground.value) return@launch
+            val at = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+            lastBackground = "In the background at $at: " + MemoryStats.read(this@GlassApp, pss = true)
+        }
     }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         // UI_HIDDEN and above: we are in the background; RUNNING_LOW / CRITICAL: the TV is short of memory.
         @Suppress("DEPRECATION")
-        if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN || level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
-            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) releaseImages()
+        when {
+            level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> if (!_foreground.value) onBackground() else releaseImages()
+            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW || level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> releaseImages()
+        }
     }
 
     /** Bumped when Home is pressed while Glass is already in front: the carousel goes back to its start. */
@@ -96,10 +126,18 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
             previous?.uncaughtException(t, e)
         }
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
-            override fun onActivityStarted(a: Activity) { started++; _foreground.value = true }
+            override fun onActivityStarted(a: Activity) {
+                started++
+                if (!_foreground.value) {
+                    _foreground.value = true
+                    backgroundJob?.cancel()
+                    // Decode the dock icons again off the main thread, ahead of the first frames.
+                    scope.launch { apps.apps.value.forEach { runCatching { apps.artwork(it) } } }
+                }
+            }
             override fun onActivityStopped(a: Activity) {
                 started = (started - 1).coerceAtLeast(0)
-                if (started == 0) { _foreground.value = false; releaseImages() }
+                if (started == 0) { _foreground.value = false; onBackground() }
             }
             override fun onActivityCreated(a: Activity, b: Bundle?) {}
             override fun onActivityResumed(a: Activity) {}
@@ -110,7 +148,6 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         settings = Settings(this)
         HomeKeyService.setIntercept(settings.interceptHome)
         if (settings.perfMode == "auto") settings.applyMode("auto")
-        com.glasslauncher.tv.ui.GlassCache.res = settings.glassRes
         http = Http(this)
         icons = IconStore(this)
         packs = IconPacks(this)
@@ -121,7 +158,5 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         cw = com.glasslauncher.tv.data.ContinueWatching(this, settings, http, trakt, catalogs, scope, foreground).also { it.start() }
         // Icon files from the drop folder are decoded off the main thread.
         scope.launch(Dispatchers.IO) { runCatching { icons.importDropFolder(apps.apps.value.map { it.pkg }) } }
-        // Decode dock artwork once, off the main thread, so the first frames are instant.
-        scope.launch { apps.apps.value.forEach { runCatching { apps.artwork(it) } } }
     }
 }

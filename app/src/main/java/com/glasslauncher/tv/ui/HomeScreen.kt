@@ -176,28 +176,13 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
     val shownUrl = remember { mutableStateOf<String?>(null) }
     var fadeMs by remember { mutableIntStateOf(settings.transitionMs) }
     val mix = remember { androidx.compose.animation.core.Animatable(1f) }
+    // This whole screen (and [images]) exists only between ON_START and ON_STOP: MainActivity drops it when
+    // another app comes to the front, so none of these bitmaps stays in memory behind NuvioTV.
+    val images = LocalImageCaches.current
     // In "performance" mode only two baked full-screen backdrops are kept (about 8 MB each at 1080p).
-    BakeCache.max = if (settings.effectiveMode() == "performance") 2 else 4
-    // ON_STOP (another app in front, e.g. NuvioTV playing): drop every big bitmap this screen holds, so the
-    // memory goes to the app in front. ON_START bumps [restart], which loads the current backdrop again.
-    var restart by remember { mutableIntStateOf(0) }
-    val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(owner) {
-        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
-            when (e) {
-                androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
-                    backImgs = null; prevImgs = null; shownBackdrop = null; prevBackdrop = null; shownUrl.value = null
-                }
-                androidx.lifecycle.Lifecycle.Event.ON_START -> restart++
-                else -> Unit
-            }
-        }
-        owner.lifecycle.addObserver(obs)
-        onDispose { owner.lifecycle.removeObserver(obs) }
-    }
-    LaunchedEffect(backdrop, settings.blurRadius, settings.glassRes, restart) {
-        if (!owner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) return@LaunchedEffect
-        GlassCache.res = settings.glassRes
+    images.maxBaked = if (settings.effectiveMode() == "performance") 2 else 4
+    LaunchedEffect(backdrop, settings.blurRadius, settings.glassRes) {
+        images.res = settings.glassRes
         val u = backdrop ?: return@LaunchedEffect
         // Wait for both the full picture and its glass copy, then switch them in the same frame.
         // Originals are big downloads: if the original is not cached yet, show the 1280 px copy first
@@ -209,7 +194,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         val high = settings.imageQuality == "high"
         val orig = async { loader.execute(imgReq(ctx, if (high) sized(u, "w1280") else u)) }
         val next = kotlinx.coroutines.coroutineScope {
-            val g = async { GlassCache.get(ctx, u, settings.blurRadius) }
+            val g = async { images.glass(ctx, u, settings.blurRadius) }
             fullBmp = kotlinx.coroutines.withTimeoutOrNull(120) { bmpOf(orig.await()) }
             if (fullBmp == null && !high && sized(u, "w1280") != u) {
                 fullBmp = bmpOf(loader.execute(imgReq(ctx, sized(u, "w1280"))))
@@ -222,8 +207,8 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         fadeMs = if (app.browsing()) 220 else settings.transitionMs
         val (bw, bh) = bakeSize(ctx)
         val src = fullBmp
-        val baked = BakeCache.get(u, src) ?: bakeCached(u, src, bw, bh)
-        if (GlassHalf.peek(baked) == null) withContext(Dispatchers.Default) { GlassHalf.of(baked) }
+        val baked = images.getBaked(u, src) ?: bakeCached(images, u, src, bw, bh)
+        if (images.peekHalf(baked) == null) withContext(Dispatchers.Default) { halfOf(images, baked) }
         // Page and glass fade in the same frames with the same timing, so the bar never runs ahead.
         prevImgs = backImgs
         prevBackdrop = shownBackdrop
@@ -243,7 +228,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         }
         upgrade?.let { d -> bmpOf(d.await())?.let { hi ->
             val (bw, bh) = bakeSize(ctx)
-            val b = withContext(Dispatchers.Default) { bakeBackdrop(hi, bw, bh).also { GlassHalf.of(it) } }
+            val b = withContext(Dispatchers.Default) { bakeBackdrop(hi, bw, bh).also { halfOf(images, it) } }
             fadeMs = 0; shownBackdrop = b
         } }
     }
@@ -311,10 +296,10 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         val screenHdp = maxHeight.value
         val veil = animateFloatAsState(if (expanded && !folderOpen) 1f else 0f, tween(320), label = "veil")
         // Clear glass shows the page picture itself (full resolution, scrims included); the small
-        // GlassCache copy is only the fallback before the first picture is on screen.
-        val pageSharp = GlassHalf.peek(shownBackdrop)
+        // glass copy (ImageCaches) is only the fallback before the first picture is on screen.
+        val pageSharp = images.peekHalf(shownBackdrop)
         val env = GlassEnv(backImgs?.first, pageSharp ?: backImgs?.second, backImgs?.third, rootW, rootH, settings.glassTint, settings.refraction, 1f, wobble.asState(),
-            prevImgs?.first, if (prevImgs != null) (GlassHalf.peek(prevBackdrop) ?: prevImgs?.second) else null, mix.asState(), veil, sharpIsPage = pageSharp != null)
+            prevImgs?.first, if (prevImgs != null) (images.peekHalf(prevBackdrop) ?: prevImgs?.second) else null, mix.asState(), veil, sharpIsPage = pageSharp != null)
         val radius = settings.cornerRadius
         val metrics = remember(s, maxWidth, settings.dockScale) { DockMetrics(s, maxWidth.value, settings.dockScale) }
 
@@ -440,39 +425,17 @@ private fun PlayGlyph(modifier: Modifier, color: Color) {
  * 480 px copy) and lined up exactly with the page, at a quarter of the texture reading a full-size copy costs.
  */
 
-private object GlassHalf {
-    private val map = java.util.WeakHashMap<ImageBitmap, ImageBitmap>()
-    @Synchronized fun peek(b: ImageBitmap?): ImageBitmap? = b?.let { map[it] }
-    @Synchronized fun clear() = map.clear()
-    fun of(b: ImageBitmap): ImageBitmap {
-        peek(b)?.let { return it }
-        val a = b.asAndroidBitmap()
-        val h = immutable(android.graphics.Bitmap.createScaledBitmap(a, a.width / 2, a.height / 2, true)).asImageBitmap()
-        synchronized(this) { map[b] = h }
-        return h
-    }
-}
-
-private object BakeCache {
-    /** Most baked backdrops kept: 4, or 2 in "performance" mode (set by HomeScreen). */
-    @Volatile var max = 4
-    private val map = object : LinkedHashMap<String, Pair<Int, ImageBitmap>>(8, 0.75f, true) {
-        override fun removeEldestEntry(e: MutableMap.MutableEntry<String, Pair<Int, ImageBitmap>>?) = size > max
-    }
-    @Synchronized fun clear() = map.clear()
-    @Synchronized fun get(url: String, src: ImageBitmap): ImageBitmap? =
-        map[url]?.takeIf { it.first == src.width * 10000 + src.height }?.second
-    @Synchronized fun put(url: String, src: ImageBitmap, baked: ImageBitmap) { map[url] = (src.width * 10000 + src.height) to baked }
-}
-
 /**
- * Drops every cached full-screen backdrop and glass copy (app in the background, or the TV low on memory).
- * Bitmaps still on screen stay valid: they are only unreferenced here, never recycled.
+ * Half-size copy of a baked page picture, for the clear glass: sharp (2x, not 4x, enlargement like the old
+ * 480 px copy) and lined up exactly with the page, at a quarter of the texture reading a full-size copy costs.
  */
-fun releaseBitmaps() {
-    BakeCache.clear()
-    GlassHalf.clear()
-    GlassCache.clear()
+private fun halfOf(images: ImageCaches, b: ImageBitmap): ImageBitmap {
+    images.peekHalf(b)?.let { return it }
+    val a = b.asAndroidBitmap()
+    val h = immutable(android.graphics.Bitmap.createScaledBitmap(a, a.width / 2, a.height / 2, true)).asImageBitmap()
+    BitmapTracker.track(h, "backdrop")
+    images.putHalf(b, h)
+    return h
 }
 
 /**
@@ -490,9 +453,9 @@ private fun bakeSize(ctx: android.content.Context): Pair<Int, Int> {
  * Bakes [src] and keeps the result even if the caller is cancelled meanwhile (you pressed Right again):
  * the work is done anyway, so the next visit to this slide finds it in the cache.
  */
-private suspend fun bakeCached(url: String, src: ImageBitmap, w: Int, h: Int): ImageBitmap =
+private suspend fun bakeCached(images: ImageCaches, url: String, src: ImageBitmap, w: Int, h: Int): ImageBitmap =
     withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Default) {
-        BakeCache.get(url, src) ?: bakeBackdrop(src, w, h).also { BakeCache.put(url, src, it); GlassHalf.of(it) }
+        images.getBaked(url, src) ?: bakeBackdrop(src, w, h).also { images.putBaked(url, src, it); halfOf(images, it) }
     }
 
 /**
@@ -513,7 +476,7 @@ private fun bakeBackdrop(src: ImageBitmap, w: Int, h: Int): ImageBitmap {
     c.drawRect(0f, 0f, w * 0.62f, h.toFloat(), p)
     p.shader = android.graphics.LinearGradient(0f, h * 0.58f, 0f, h.toFloat(), 0x00000000, 0xCC000000.toInt(), android.graphics.Shader.TileMode.CLAMP)
     c.drawRect(0f, h * 0.58f, w.toFloat(), h.toFloat(), p)
-    return immutable(out).asImageBitmap()
+    return BitmapTracker.track(immutable(out).asImageBitmap(), "backdrop")
 }
 
 /**
@@ -553,7 +516,11 @@ private fun HeroSection(
     val cwItems by app.cw.items.collectAsState()
     val enrichedRaw by app.catalogs.enrichedItems.collectAsState()
     val status by app.catalogs.status.collectAsState()
-    var index by remember { mutableIntStateOf(0) }
+    val images = LocalImageCaches.current
+    // Kept in the app (a plain number, no picture), so the carousel comes back on the same slide after
+    // MainActivity rebuilt this screen on ON_START.
+    var index by remember { mutableIntStateOf(app.heroIndex) }
+    androidx.compose.runtime.SideEffect { app.heroIndex = index }
     var focused by remember { mutableStateOf(false) }
     val mode = settings.continueMode
     val lead = settings.cwLead
@@ -600,7 +567,7 @@ private fun HeroSection(
             if (!app.browsing()) kotlinx.coroutines.withTimeoutOrNull(2500L) {
                 kotlinx.coroutines.coroutineScope {
                     if (t.background.isNotBlank()) launch { loader.execute(imgReq(ctx, t.background)) }
-                    if (t.background.isNotBlank()) launch { GlassCache.get(ctx, t.background, settings.blurRadius) }
+                    if (t.background.isNotBlank()) launch { images.glass(ctx, t.background, settings.blurRadius) }
                     if (t.logo.isNotBlank()) launch { loader.execute(imgReq(ctx, t.logo, 1000, 400)) }
                 }
             }
@@ -617,7 +584,7 @@ private fun HeroSection(
         val loader = SingletonImageLoader.get(ctx)
         while (true) {
             val next = gallery[(shot + 1).mod(gallery.size)]
-            loader.enqueue(imgReq(ctx, next)); launch { GlassCache.get(ctx, next, settings.blurRadius) }
+            loader.enqueue(imgReq(ctx, next)); launch { images.glass(ctx, next, settings.blurRadius) }
             delay(shotMs)
             if (shot + 1 >= gallery.size) break
             shot++
@@ -660,9 +627,9 @@ private fun HeroSection(
                     val u = n.background
                     val r = loader.execute(imgReq(ctx, if (settings.imageQuality == "high") sized(u, "w1280") else u))
                     val b = (r as? SuccessResult)?.image?.toBitmap()?.asImageBitmap() ?: return@launch
-                    if (BakeCache.get(u, b) == null) { val (bw, bh) = bakeSize(ctx); bakeCached(u, b, bw, bh) }
+                    if (images.getBaked(u, b) == null) { val (bw, bh) = bakeSize(ctx); bakeCached(images, u, b, bw, bh) }
                 }
-                launch { GlassCache.get(ctx, n.background, settings.blurRadius) }
+                launch { images.glass(ctx, n.background, settings.blurRadius) }
             }
             if (n.logo.isNotBlank()) loader.enqueue(imgReq(ctx, n.logo, 1000, 400))
         }

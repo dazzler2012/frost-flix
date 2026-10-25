@@ -111,9 +111,18 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
         (pm.getLeanbackLaunchIntentForPackage(e.pkg) ?: pm.getLaunchIntentForPackage(e.pkg))
             ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-    private val cache = object : LruCache<String, Art>(64 * 1024) {
-        override fun sizeOf(key: String, value: Art) = value.bmp.width * value.bmp.height * 4 / 1024
+    // Decoded dock artwork, in KB. Counts both copies (a transparent icon also has a darkened one); emptied by
+    // [releaseArt] when Frost-flix goes to the background, and decoded again on return.
+    private val cache = object : LruCache<String, Art>(48 * 1024) {
+        override fun sizeOf(key: String, value: Art): Int {
+            val main = value.bmp.width * value.bmp.height * 4
+            val second = if (value.onLight !== value.bmp) value.onLight.width * value.onLight.height * 4 else 0
+            return ((main + second) / 1024).coerceAtLeast(1)
+        }
     }
+
+    /** Drops every decoded icon (app in the background). Icons on screen are never recycled here. */
+    fun releaseArt() = cache.evictAll()
 
     private fun cacheKey(e: AppEntry) = "${settings.iconPack}|${icons.rev.intValue}|${e.pkg}"
 
@@ -138,7 +147,8 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
                     d.toBitmap(if (wide) 640 else 256)
                 }
                 val transparent = isTransparent(bmp)
-                Art(bmp.asImageBitmap(), transparent, isLight(bmp), if (transparent) darkenWhites(bmp).asImageBitmap() else bmp.asImageBitmap())
+                val main = com.glasslauncher.tv.ui.BitmapTracker.track(bmp.asImageBitmap(), "icons")
+                Art(main, transparent, isLight(bmp), if (transparent) com.glasslauncher.tv.ui.BitmapTracker.track(darkenWhites(bmp).asImageBitmap(), "icons") else main)
                     .also { cache.put(key, it) }
             }.getOrNull()
         }

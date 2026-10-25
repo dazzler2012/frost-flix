@@ -72,7 +72,7 @@ import kotlin.math.roundToInt
 private sealed interface SRow
 private class Toggle(val title: String, val desc: String, val get: () -> Boolean, val set: (Boolean) -> Unit) : SRow
 private class Adjust(val title: String, val desc: String, val value: () -> String, val step: (Int) -> Unit) : SRow
-private class Act(val title: String, val desc: String, val value: String = "", val onClick: () -> Unit) : SRow
+private class Act(val title: String, val desc: String, val value: String = "", val onLong: (() -> Unit)? = null, val onClick: () -> Unit) : SRow
 private class Note(val text: String) : SRow
 private class AppItem(val entry: AppEntry) : SRow
 /** The Trakt sign-in block: one button that stays the same row (and keeps focus) in every state. */
@@ -501,7 +501,7 @@ private fun RowView(row: SRow, s: Float, app: GlassApp, onApp: (AppEntry) -> Uni
                 else Text(row.value(), color = Color.White.copy(alpha = if (f) 1f else 0.75f), fontSize = (13 * s).sp)
             }
         }
-        is Act -> Frame(s, onClick = row.onClick) { f ->
+        is Act -> Frame(s, onClick = row.onClick, onLong = row.onLong) { f ->
             Label(row.title, row.desc, s, Modifier.weight(1f))
             if (row.value.isNotEmpty()) Text(row.value, color = Color.White.copy(alpha = 0.7f), fontSize = (12.5f * s).sp)
         }
@@ -630,7 +630,7 @@ private fun Frame(
 @Composable
 private fun rememberQr(text: String, sizePx: Int, margin: Int = 2): ImageBitmap? =
     produceState<ImageBitmap?>(null, text, sizePx, margin) {
-        value = withContext(Dispatchers.Default) { runCatching { com.glasslauncher.tv.net.Net.qr(text, sizePx, margin).asImageBitmap() }.getOrNull() }
+        value = withContext(Dispatchers.Default) { runCatching { BitmapTracker.track(com.glasslauncher.tv.net.Net.qr(text, sizePx, margin).asImageBitmap(), "qr") }.getOrNull() }
     }.value
 
 /** Version, the original project's page as a QR code, credits and the last crash (if any). */
@@ -640,6 +640,14 @@ private fun AboutPane(app: GlassApp, s: Float, onApp: (com.glasslauncher.tv.data
     val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?" }
     val qr = rememberQr("https://github.com/$UPSTREAM_REPO", 420)
     val crash = remember { java.io.File(ctx.filesDir, "last-crash.txt").takeIf { it.exists() }?.readText()?.lineSequence()?.take(2)?.joinToString(" · ").orEmpty() }
+    // Hidden: hold OK on the version for the Memory line (refreshed every 3 s while shown).
+    var showMemory by remember { mutableStateOf(false) }
+    val memory by produceState("", showMemory) {
+        while (showMemory) {
+            value = withContext(Dispatchers.IO) { runCatching { com.glasslauncher.tv.MemoryStats.read(app, pss = true) }.getOrDefault("") }
+            kotlinx.coroutines.delay(3000)
+        }
+    }
     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy((18 * s).dp)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.size((150 * s).dp).clip(RoundedCornerShape((12 * s).dp)).background(Color.White)) {
@@ -650,7 +658,11 @@ private fun AboutPane(app: GlassApp, s: Float, onApp: (com.glasslauncher.tv.data
             Text("Scan with your phone", color = Color.White.copy(alpha = 0.5f), fontSize = (9 * s).sp)
         }
         val rows = buildList<SRow> {
-            add(Note("Frost-flix $version · based on Glassio by mohammadmrh12 (GPL-3.0), no self-updates"))
+            add(Act("Frost-flix $version", "Based on Glassio by mohammadmrh12 (GPL-3.0), no self-updates", "", onLong = { showMemory = !showMemory }) {})
+            if (showMemory) {
+                add(Note("Memory now · " + memory.ifBlank { "measuring…" }))
+                add(Note(app.lastBackground.ifBlank { "Memory in the background: not measured yet (it is noted ~5 s after another app comes to the front)" }))
+            }
             add(Note("Made by Mohammad · Fonts: Inter (SIL OFL) · Weather: Open-Meteo · This product uses the TMDB API but is not endorsed or certified by TMDB."))
             if (crash.isNotBlank()) add(Act("Last crash", crash.take(120), "Clear") { java.io.File(ctx.filesDir, "last-crash.txt").delete(); toast(ctx, "Cleared") })
         }
