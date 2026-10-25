@@ -74,6 +74,11 @@ private class TokenVault(ctx: Context) {
     var needsSignIn: Boolean
         get() = sp.getBoolean("needsSignIn", false)
         set(v) { sp.edit().putBoolean("needsSignIn", v).apply() }
+
+    /** The Trakt username, for "Signed in as …". Not a secret. */
+    var username: String
+        get() = sp.getString("username", "").orEmpty()
+        set(v) { sp.edit().putString("username", v).apply() }
 }
 
 /**
@@ -84,7 +89,10 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
     sealed interface State {
         data object NotConfigured : State
         data object SignedOut : State
-        data class Waiting(val userCode: String, val url: String, val expiresAt: Long) : State
+        /** Sign-in pressed, waiting for Trakt's code. */
+        data object Starting : State
+        /** [qrUrl] is what the QR code encodes: Trakt's complete URL (code included) when it sends one, else [url]. */
+        data class Waiting(val userCode: String, val url: String, val qrUrl: String, val expiresAt: Long) : State
         data object SignedIn : State
         data class Failed(val message: String) : State
     }
@@ -106,6 +114,34 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
         }
     )
     val signedIn: Boolean get() = state.value == State.SignedIn
+    /** Empty until known; signed-in users from before 1.9.3-d5 get it loaded at start. */
+    val username = MutableStateFlow(vault.username)
+
+    init {
+        if (signedIn && username.value.isBlank()) scope.launch(Dispatchers.IO) { accessToken()?.let { loadUsername(it) } }
+    }
+
+    /** GET /users/settings on api.trakt.tv → user.username. Best effort: on failure the page just says "Signed in to Trakt". */
+    private fun loadUsername(token: String) {
+        val r = runCatching { call("GET", "/users/settings", bearer = token) }.getOrNull() ?: return
+        if (r.code != 200) return
+        val name = runCatching { JSONObject(r.body).optJSONObject("user")?.optString("username").orEmpty() }.getOrDefault("").trim().take(60)
+        if (name.isNotBlank()) { vault.username = name; username.value = name }
+    }
+
+    /**
+     * Trakt's complete activation URL (code already in it) if the reply has one, else null.
+     * Only accepted when it is https on the same host as verification_url and contains the code.
+     */
+    private fun completeUrl(o: JSONObject, url: String, userCode: String): String? {
+        val host = runCatching { java.net.URI(url).host }.getOrNull() ?: return null
+        return listOf("verification_url_complete", "verification_uri_complete")
+            .map { o.optString(it).trim() }
+            .firstOrNull { u ->
+                u.startsWith("https://") && u.contains(userCode) &&
+                    runCatching { java.net.URI(u).host }.getOrNull().equals(host, ignoreCase = true)
+            }
+    }
 
     // ---- HTTP (api.trakt.tv, and auth.trakt.tv for /oauth/*; HTTPS only, never cached, never logged)
 
@@ -161,12 +197,13 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
     fun startSignIn() {
         if (!configured) return
         signInJob?.cancel()
+        state.value = State.Starting
         signInJob = scope.launch(Dispatchers.IO) { deviceFlow() }
     }
 
     fun cancelSignIn() {
         signInJob?.cancel(); signInJob = null
-        if (state.value is State.Waiting) state.value = State.SignedOut
+        if (state.value is State.Waiting || state.value == State.Starting) state.value = State.SignedOut
     }
 
     private suspend fun deviceFlow() {
@@ -185,7 +222,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
         }
         val deadline = System.currentTimeMillis() + o.optLong("expires_in", 600) * 1000
         var interval = o.optLong("interval", 5).coerceAtLeast(1)
-        state.value = State.Waiting(userCode, url, deadline)
+        state.value = State.Waiting(userCode, url, completeUrl(o, url, userCode) ?: url, deadline)
         while (System.currentTimeMillis() + interval * 1000 < deadline) {
             delay(interval * 1000)
             val r = runCatching { call("POST", "/oauth/device/token", JSONObject().put("code", device).put("client_id", clientId)) }.getOrNull()
@@ -195,6 +232,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
                     val t = parseTokens(r.body)
                     if (t == null || !lock.withLock { vault.save(t) }) { state.value = State.Failed("Couldn't store the Trakt sign-in"); return }
                     vault.needsSignIn = false
+                    loadUsername(t.access)
                     state.value = State.SignedIn
                     onSignedIn()
                     return
@@ -231,6 +269,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
         val error = runCatching { JSONObject(r.body).optString("error") }.getOrDefault("")
         if (error == "invalid_grant") {
             vault.clear(); vault.needsSignIn = true
+            vault.username = ""; username.value = ""
             state.value = State.Failed(SIGN_IN_AGAIN)
             return null
         }
@@ -259,7 +298,8 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
 
     suspend fun signOut() = withContext(Dispatchers.IO) {
         cancelSignIn()
-        val t = lock.withLock { vault.load().also { vault.clear(); vault.needsSignIn = false } }
+        val t = lock.withLock { vault.load().also { vault.clear(); vault.needsSignIn = false; vault.username = "" } }
+        username.value = ""
         state.value = if (configured) State.SignedOut else State.NotConfigured
         // Best effort: also end the session on Trakt's side.
         if (t != null) runCatching { call("POST", "/oauth/revoke", JSONObject().put("token", t.access).put("client_id", clientId)) }

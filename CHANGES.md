@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d4`. `versionCode` is 28 (upstream 25).
+- `versionName` changed to `1.9.3-d5`. `versionCode` is 29 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -116,6 +116,15 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 - Polling now stops on any unexpected 4xx answer instead of waiting silently until the code expires. 5xx answers are retried at the next interval.
 - The build only trims leading and trailing whitespace and newlines from `TRAKT_CLIENT_ID` and `TRAKT_REDIRECT_URI`. Every other character is kept, including `-` and `_`. (Before, the Client ID lost every character that wasn't a letter or digit, which broke IDs containing `-` or `_` and caused the HTTP 401.)
 - CI runs `tools/trakt_ci_check.sh`: it prints the Client ID's length, its first and last 4 characters and the HTTP status Trakt returns for a device code request. Never the full value.
+
+## Fixed: Trakt sign-in page (1.9.3-d5)
+
+- Pressing "Sign in to Trakt" no longer moves focus to the category list or switches the settings page. The sign-in button, "Cancel" and "Signed in as …" are one row that stays in place, so focus stays on it.
+- The code appears right on Settings → Continue Watching: "Getting a code from Trakt…", then a QR code, the address and the 8-character code in large text, with focus on "Cancel".
+- The QR code is made on the TV with ZXing (`com.google.zxing:core`, already used for the About QR). Black on white with a 4-module white border, 210 dp. It encodes `verification_url`. If Trakt's reply also has `verification_url_complete` or `verification_uri_complete` (https, same host, containing the code), the QR uses that instead.
+- After sign-in the page stays open and shows "Signed in as <username>". The username comes from `GET /users/settings` on `https://api.trakt.tv` and is kept in app-private storage (not encrypted; it is not a secret). Signed-in users from 1.9.3-d4 get it loaded at app start. OK on that row updates Continue Watching now.
+- A failed sign-in shows the whole error text above the button instead of one cut-off line.
+- No new network hosts.
 
 ## Renamed to Frost-flix
 

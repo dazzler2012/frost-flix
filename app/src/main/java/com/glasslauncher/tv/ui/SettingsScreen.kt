@@ -41,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.focus.focusRequester
@@ -73,6 +74,8 @@ private class Adjust(val title: String, val desc: String, val value: () -> Strin
 private class Act(val title: String, val desc: String, val value: String = "", val onClick: () -> Unit) : SRow
 private class Note(val text: String) : SRow
 private class AppItem(val entry: AppEntry) : SRow
+/** The Trakt sign-in block: one button that stays the same row (and keeps focus) in every state. */
+private class TraktBox(val state: Trakt.State, val username: String, val signedInInfo: String, val onClick: () -> Unit) : SRow
 
 private enum class Kind { Rows, About }
 private class Category(val title: String, val kind: Kind = Kind.Rows, val rows: @Composable () -> List<SRow> = { emptyList() })
@@ -280,6 +283,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
         },
         Category("Continue Watching") {
             val trakt by app.trakt.state.collectAsState()
+            val traktUser by app.trakt.username.collectAsState()
             val cwList by app.cw.entries.collectAsState()
             val fetched by app.cw.lastFetch.collectAsState()
             buildList {
@@ -291,19 +295,18 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 }, { st.cwLead = cycle(listOf(1, 2, 3, 4, 5, 0), st.cwLead, it) }))
                 add(Toggle("Progress bar", "Shows Continue · S1 · E3 · 42% under the title", { st.cwProgress }, { st.cwProgress = it }))
                 add(Note("Trakt"))
-                when (val t = trakt) {
-                    Trakt.State.NotConfigured -> add(Note("Trakt not configured. This build has no Trakt client ID (see SETUP.md)."))
-                    Trakt.State.SignedOut -> add(Act("Sign in to Trakt", "Continue Watching comes from what NuvioTV scrobbles to Trakt", "") { app.trakt.startSignIn() })
-                    is Trakt.State.Failed -> add(Act("Sign in to Trakt", t.message, "") { app.trakt.startSignIn() })
-                    is Trakt.State.Waiting -> {
-                        add(Note("On your phone, open ${t.url} and enter the code below."))
-                        add(Act("Code: ${t.userCode}", "Waiting for Trakt… The code works until " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t.expiresAt)), "Cancel") { app.trakt.cancelSignIn() })
-                    }
-                    Trakt.State.SignedIn -> {
-                        val ago = if (fetched <= 0L) "not loaded yet" else "updated ${((System.currentTimeMillis() - fetched) / 60_000).coerceAtLeast(0)} min ago"
-                        add(Note("Signed in to Trakt · ${cwList.size} titles · $ago. Updates at most every 30 minutes."))
-                        add(Act("Sign out of Trakt", "Removes the sign-in and the list from this TV", "") { io { app.trakt.signOut(); app.cw.clear(); "Signed out of Trakt" } })
-                    }
+                if (trakt == Trakt.State.NotConfigured) add(Note("Trakt not configured. This build has no Trakt client ID (see SETUP.md)."))
+                else {
+                    // Sign-in, the code and "Signed in as …" all live in this one row, so focus never leaves the page.
+                    val ago = if (fetched <= 0L) "not loaded yet" else "updated ${((System.currentTimeMillis() - fetched) / 60_000).coerceAtLeast(0)} min ago"
+                    add(TraktBox(trakt, traktUser, "${cwList.size} titles · $ago · OK updates now (otherwise at most every 30 minutes)") {
+                        when (trakt) {
+                            Trakt.State.Starting, is Trakt.State.Waiting -> app.trakt.cancelSignIn()
+                            Trakt.State.SignedIn -> io { app.cw.fetch(true); "Continue Watching updated" }
+                            else -> app.trakt.startSignIn()
+                        }
+                    })
+                    if (trakt == Trakt.State.SignedIn) add(Act("Sign out of Trakt", "Removes the sign-in and the list from this TV", "") { io { app.trakt.signOut(); app.cw.clear(); "Signed out of Trakt" } })
                 }
             }
         },
@@ -478,6 +481,7 @@ private fun RowView(row: SRow, s: Float, app: GlassApp, onApp: (AppEntry) -> Uni
             Label(row.title, row.desc, s, Modifier.weight(1f))
             if (row.value.isNotEmpty()) Text(row.value, color = Color.White.copy(alpha = 0.7f), fontSize = (12.5f * s).sp)
         }
+        is TraktBox -> TraktBoxView(row, s)
         is AppItem -> {
             val e = row.entry
             val hidden = e.pkg in app.settings.hiddenApps
@@ -504,6 +508,62 @@ private fun RowView(row: SRow, s: Float, app: GlassApp, onApp: (AppEntry) -> Uni
                 if (flags.isNotEmpty()) Text(flags, color = Color(0xFFB9ABFF), fontSize = (11.5f * s).sp)
                 Text(if (moving) "  ◀ ▶ · OK" else "", color = Color(0xFFB9ABFF), fontSize = (12 * s).sp)
             }
+        }
+    }
+}
+
+/**
+ * Signed out / failed: "Sign in to Trakt". Getting a code / waiting: QR code, address and code, and "Cancel".
+ * Signed in: "Signed in as <username>". The button is the same composable in every state, so it keeps focus.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun TraktBoxView(row: TraktBox, s: Float) {
+    val t = row.state
+    val showCode = t == Trakt.State.Starting || t is Trakt.State.Waiting
+    val bring = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    // The block grows when the code appears; scroll it fully into view.
+    LaunchedEffect(t is Trakt.State.Waiting, showCode) { if (showCode) { kotlinx.coroutines.delay(60); runCatching { bring.bringIntoView() } } }
+    val dim = Color.White.copy(alpha = 0.6f)
+    Row(
+        Modifier.fillMaxWidth().bringIntoViewRequester(bring),
+        horizontalArrangement = Arrangement.spacedBy((18 * s).dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (t is Trakt.State.Waiting) {
+            val qr = remember(t.qrUrl) { com.glasslauncher.tv.net.Net.qr(t.qrUrl, 600, margin = 4).asImageBitmap() }
+            Image(
+                qr, "QR code: ${t.qrUrl}",
+                Modifier.size((210 * s).dp).clip(RoundedCornerShape((10 * s).dp)),
+                filterQuality = androidx.compose.ui.graphics.FilterQuality.None,
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy((4 * s).dp)) {
+            when (t) {
+                Trakt.State.Starting -> Text("Getting a code from Trakt…", color = Color.White, fontSize = (16 * s).sp, modifier = Modifier.padding(start = (8 * s).dp))
+                is Trakt.State.Waiting -> Column(Modifier.padding(start = (8 * s).dp, bottom = (6 * s).dp)) {
+                    Text("Scan the QR code with your phone, or open", color = dim, fontSize = (12 * s).sp)
+                    Text(t.url.removePrefix("https://"), color = Color.White, fontSize = (22 * s).sp, fontWeight = FontWeight.SemiBold)
+                    Text("and enter this code", color = dim, fontSize = (12 * s).sp, modifier = Modifier.padding(top = (4 * s).dp))
+                    Text(
+                        t.userCode, color = Color.White, fontSize = (38 * s).sp, fontWeight = FontWeight.Bold,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, letterSpacing = (3 * s).sp,
+                    )
+                    Text(
+                        "Waiting for Trakt… The code works until " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t.expiresAt)),
+                        color = dim, fontSize = (11 * s).sp,
+                    )
+                }
+                is Trakt.State.Failed -> Text(t.message, color = Color(0xFFFFB4A9), fontSize = (12 * s).sp, modifier = Modifier.padding(horizontal = (8 * s).dp))
+                else -> Unit
+            }
+            val (title, desc) = when (t) {
+                Trakt.State.Starting, is Trakt.State.Waiting -> "Cancel" to "Stop signing in"
+                Trakt.State.SignedIn -> (if (row.username.isNotBlank()) "Signed in as ${row.username}" else "Signed in to Trakt") to row.signedInInfo
+                is Trakt.State.Failed -> "Sign in to Trakt" to "Try again"
+                else -> "Sign in to Trakt" to "Continue Watching comes from what NuvioTV scrobbles to Trakt"
+            }
+            Frame(s, onClick = row.onClick) { Label(title, desc, s, Modifier.weight(1f)) }
         }
     }
 }
