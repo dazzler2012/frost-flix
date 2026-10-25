@@ -114,7 +114,8 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 - The address shown on the TV is the `verification_url` Trakt returns. There is no built-in fallback address any more.
 - A failed sign-in shows the step (1 = get code, 2 = get token), the HTTP status and Trakt's `error` / `error_description`. The Client ID, device code and tokens are never shown or logged.
 - Polling now stops on any unexpected 4xx answer instead of waiting silently until the code expires. 5xx answers are retried at the next interval.
-- The build keeps only ASCII letters and digits of `TRAKT_CLIENT_ID`. CI runs `tools/trakt_ci_check.sh`: it prints the ID's length and first and last 4 characters and whether Trakt accepts it (warning only, never the full value).
+- The build only trims leading and trailing whitespace and newlines from `TRAKT_CLIENT_ID` and `TRAKT_REDIRECT_URI`. Every other character is kept, including `-` and `_`. (Before, the Client ID lost every character that wasn't a letter or digit, which broke IDs containing `-` or `_` and caused the HTTP 401.)
+- CI runs `tools/trakt_ci_check.sh`: it prints the Client ID's length, its first and last 4 characters and the HTTP status Trakt returns for a device code request. Never the full value.
 
 ## Renamed to Frost-flix
 
