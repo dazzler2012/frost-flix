@@ -122,6 +122,19 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         }
     }
 
+    /**
+     * True while "Home button opens Frost-flix" is on but the accessibility service it needs is off (Android
+     * switches it off after every update of a sideloaded app). The home screen then shows a banner.
+     */
+    val homeServiceOff = androidx.compose.runtime.mutableStateOf(false)
+    /**
+     * Checks the accessibility service on every start (so also on the first start after an update, when Android
+     * has just switched it off), and when Android reports an accessibility change.
+     */
+    fun checkHomeService() {
+        homeServiceOff.value = settings.interceptHome && !HomeKeyService.isEnabled(this)
+    }
+
     /** Bumped when Home is pressed while Glass is already in front: the carousel goes back to its start. */
     val homeRev = androidx.compose.runtime.mutableIntStateOf(0)
     /** Last Left/Right in the carousel: while browsing, slides switch at once and fades are short. */
@@ -163,6 +176,7 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityStarted(a: Activity) {
                 started++
+                checkHomeService()
                 if (!_foreground.value) {
                     _foreground.value = true
                     backgroundJob?.cancel()
@@ -182,6 +196,12 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         })
         settings = Settings(this)
         HomeKeyService.setIntercept(settings.interceptHome)
+        checkHomeService()
+        // Hides the banner as soon as the service is switched on (or shows it when it goes off) while we run.
+        runCatching {
+            getSystemService(android.view.accessibility.AccessibilityManager::class.java)
+                ?.addAccessibilityStateChangeListener { checkHomeService() }
+        }
         if (settings.perfMode == "auto") settings.applyMode("auto")
         http = Http(this)
         icons = IconStore(this)

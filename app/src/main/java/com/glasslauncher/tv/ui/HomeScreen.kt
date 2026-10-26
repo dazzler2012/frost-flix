@@ -360,6 +360,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
                 HeroSection(app, s, hidden = expanded || folderOpen, paused = screen != Screen.Home, metrics = metrics, shownUrl = shownUrl,
                     heroFocus = heroFocus, firstTile = firstTile, onBackdrop = { backdrop = it })
                 TopBar(app, s, onSettings = { onScreen(Screen.Settings) }, modifier = Modifier.fillMaxWidth().align(Alignment.TopStart))
+                if (app.homeServiceOff.value) HomeServiceBanner(app, s, Modifier.align(Alignment.TopCenter).padding(top = (16 * s).dp))
                 Dock(
                     app = app, s = s, metrics = metrics, screenH = screenHdp, radius = radius,
                     expanded = expanded, onExpanded = { expanded = it },
@@ -1061,6 +1062,43 @@ private fun TopBar(app: GlassApp, s: Float, onSettings: () -> Unit, modifier: Mo
         } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((10 * s).dp)) {
             weatherRow()
             GearButton(s, onSettings) { barFocused = it }
+        }
+    }
+}
+
+/**
+ * "Home button is off": the Home button option is on, but Android switched the accessibility service off
+ * (it does after every update of a sideloaded app). The button opens Android's accessibility settings; the
+ * banner goes away once the service is on again (checked on every start and on every accessibility change).
+ */
+@Composable
+private fun HomeServiceBanner(app: GlassApp, s: Float, modifier: Modifier) {
+    val ctx = LocalContext.current
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) 1.06f else 1f, spring(0.6f, 450f), label = "homeBtn")
+    GlassPanel(modifier, radius = (14 * s).dp, style = app.settings.dockStyle, refract = false) {
+        Row(
+            Modifier.padding(start = (14 * s).dp, end = (6 * s).dp, top = (5 * s).dp, bottom = (5 * s).dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Home button is off.", color = Color.White, fontSize = (11 * s).sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.width((10 * s).dp))
+            Text(
+                "Turn it back on",
+                color = if (focused) Color.Black else Color.White,
+                fontSize = (11 * s).sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .graphicsLayer { scaleX = scale; scaleY = scale }
+                    .onFocusChanged { focused = it.isFocused }
+                    .tvPress {
+                        runCatching {
+                            ctx.startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }.onFailure { toast(ctx, "Accessibility settings are not available on this device") }
+                    }
+                    .clip(RoundedCornerShape(50))
+                    .background(if (focused) Color.White.copy(alpha = 0.95f) else Color.White.copy(alpha = 0.14f))
+                    .padding(horizontal = (12 * s).dp, vertical = (5 * s).dp),
+            )
         }
     }
 }

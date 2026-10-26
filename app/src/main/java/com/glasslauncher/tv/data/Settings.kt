@@ -199,5 +199,5 @@ class Settings(private val ctx: Context) {
     var saverClock: Boolean get() = b("saverClock", true); set(v) = putB("saverClock", v)
 
     // ---- System
-    var interceptHome: Boolean get() = b("interceptHome", false); set(v) { putB("interceptHome", v); com.glasslauncher.tv.HomeKeyService.setIntercept(v) }
+    var interceptHome: Boolean get() = b("interceptHome", false); set(v) { putB("interceptHome", v); com.glasslauncher.tv.HomeKeyService.setIntercept(v); (ctx.applicationContext as? com.glasslauncher.tv.GlassApp)?.checkHomeService() }
 }

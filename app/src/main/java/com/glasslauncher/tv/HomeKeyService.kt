@@ -91,6 +91,29 @@ class HomeKeyService : AccessibilityService() {
             private set
         private var instance: WeakReference<HomeKeyService>? = null
 
+        /**
+         * True when the user has the Frost-flix accessibility service switched on. Public APIs only: the
+         * services AccessibilityManager reports as enabled, and the ENABLED_ACCESSIBILITY_SERVICES secure
+         * setting (read only; Frost-flix can't change it). Android turns the service off when a sideloaded app
+         * is updated, so this is checked on every start.
+         */
+        fun isEnabled(ctx: android.content.Context): Boolean {
+            if (instance?.get() != null) return true
+            val name = HomeKeyService::class.java.name
+            val am = ctx.getSystemService(android.view.accessibility.AccessibilityManager::class.java)
+            val listed = runCatching {
+                am?.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK).orEmpty().any {
+                    val si = it.resolveInfo?.serviceInfo
+                    si != null && si.packageName == ctx.packageName && si.name == name
+                }
+            }.getOrDefault(false)
+            if (listed) return true
+            val secure = runCatching {
+                android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            }.getOrNull().orEmpty()
+            return secure.split(':').any { android.content.ComponentName.unflattenFromString(it.trim())?.let { c -> c.packageName == ctx.packageName && c.className == name } == true }
+        }
+
         /** Called at app start and when "Home button opens Frost-flix" changes. */
         fun setIntercept(on: Boolean) {
             intercept = on

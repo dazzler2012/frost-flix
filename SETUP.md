@@ -83,7 +83,7 @@ To update later, repeat step 3 after publishing a new tag.
 ## 5. First-run settings on the TV
 
 - **Make it the home app:** Settings → System → Choose default home app.
-- **Home button:** Settings → System → turn on "Home button opens Frost-flix", then switch on the Frost-flix accessibility service in the Android TV accessibility settings. Android turns that service off after every update of a sideloaded app, so turn it on again after updating.
+- **Home button:** Settings → System → turn on "Home button opens Frost-flix", then switch on the Frost-flix accessibility service in the Android TV accessibility settings. Android turns that service off after every update of a sideloaded app, so turn it on again after updating. When it is off, the home screen shows "Home button is off." with a "Turn it back on" button that opens the accessibility settings.
 - **Weather:** Settings → Clock & glass → Weather → Off.
 - **Continue Watching:** Settings → Continue Watching → Sign in to Trakt. Open the address shown on your phone and type the code. The list comes from what NuvioTV scrobbles to Trakt, so turn on Trakt in NuvioTV too.
 - **Catalogs:** Settings → Catalogs → Add add-on link. Type the manifest URL with the remote. Only `https://` links work, because cleartext HTTP is blocked (except 127.0.0.1, which Connect to Nuvio uses).

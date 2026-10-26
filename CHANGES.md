@@ -31,7 +31,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 ## Removed: WRITE_SECURE_SETTINGS
 
 - The permission was removed from the manifest.
-- `GlassApp.ensureHomeService()` was removed. It re-enabled the accessibility service by writing secure settings. After an update, turn the service on again by hand in the Android accessibility settings.
+- `GlassApp.ensureHomeService()` was removed. It re-enabled the accessibility service by writing secure settings. After an update, turn the service on again by hand in the Android accessibility settings. Since 1.9.3-d11 the home screen tells you when it is off (see "Home button check" below).
 
 ## Removed: intent-extra settings in MainActivity
 
@@ -234,3 +234,10 @@ Goal: fewer slow frames on the Shield (UI thread) and fewer offscreen GPU textur
 - **Title line:** "Frost-flix <version>". Hold OK on it for the hidden Memory and Frames lines, as before.
 - **Credits line:** "Frost-flix by Darren · Based on Glassio by mohammadmrh12 · GPL-3.0 · Fonts: Inter (SIL OFL) · Weather: Open-Meteo · This product uses the TMDB API but is not endorsed or certified by TMDB." (was "Made by Mohammad · …").
 - Unchanged: the original author's credit and link in CREDITS.md and README.md, and the `LICENSE` file.
+
+## Home button check (1.9.3-d11)
+
+- **Check:** on every start of a Frost-flix screen (so also the first start after an update, when Android has just switched the service off) and whenever Android reports an accessibility change, Frost-flix checks whether its accessibility service is on.
+- **How:** public APIs only, read-only: the services `AccessibilityManager.getEnabledAccessibilityServiceList` reports, then the `ENABLED_ACCESSIBILITY_SERVICES` secure setting. No `WRITE_SECURE_SETTINGS`, no adb, no new permission. Frost-flix never switches the service on itself.
+- **Banner:** a small glass banner at the top of the home screen, "Home button is off." with a "Turn it back on" button that opens Android's accessibility settings. It disappears once the service is on again.
+- **Only when it matters:** the banner shows only while Settings → System → "Home button opens Frost-flix" is on. With that option off, the service isn't needed.
