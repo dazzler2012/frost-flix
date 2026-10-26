@@ -135,6 +135,15 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
         toast(ctx, runCatching { block() }.getOrElse { it.message ?: "Failed" })
     }
 
+    // "Top Shelf: use apps' own rows" asks for READ_TV_LISTINGS when it is switched on; refused = stays off.
+    var appRowsInfo by remember { mutableStateOf("") }
+    val askListings = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        st.topShelfAppRows = granted
+        toast(ctx, if (granted) "Top Shelf uses apps' own rows where they have pictures" else "Permission refused: Top Shelf keeps using the fallback")
+    }
+
     val refractionWorks = android.os.Build.VERSION.SDK_INT >= 33
     val isTv = remember { ctx.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) }
     val categories = listOf(
@@ -244,6 +253,27 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 add(Adjust("Icon style", "How the plate behind every icon looks", {
                     styleName(st.tileStyle)
                 }, { st.tileStyle = cycle(listOf("liquid", "water", "water_still", "clear", "amoled", "bow"), st.tileStyle, it) }))
+                add(Toggle("Top Shelf", "Like Apple TV: the picture above the dock shows the selected app", { st.topShelf }, { st.topShelf = it }))
+                if (st.topShelf) {
+                    add(Toggle("Top Shelf: use apps' own rows",
+                        if (st.topShelfAppRows && !app.topShelf.permissionGranted()) "Permission missing: using the fallback"
+                        else "The rows apps show on the Android TV home screen (asks for a permission)",
+                        { st.topShelfAppRows && app.topShelf.permissionGranted() }) { on ->
+                        when {
+                            !on -> st.topShelfAppRows = false
+                            app.topShelf.permissionGranted() -> st.topShelfAppRows = true
+                            else -> runCatching { askListings.launch(com.glasslauncher.tv.data.TopShelf.READ_TV_LISTINGS) }
+                                .onFailure { toast(ctx, "This TV can't grant that permission: Top Shelf keeps using the fallback") }
+                        }
+                    })
+                    if (st.topShelfAppRows) {
+                        add(Act("Check apps' own rows", "Which apps give Top Shelf pictures", "") {
+                            scope.launch { appRowsInfo = app.topShelf.describeAppRows() }
+                        })
+                        if (appRowsInfo.isNotBlank()) add(Note(appRowsInfo))
+                    }
+                    add(Note("Otherwise: NuvioTV, Stremio, Kodi and Plex show your Continue Watching and Watchlist; other apps a gradient in their icon's colour with their banner."))
+                }
                 add(Note("Change one icon: on the home screen hold OK on the app → Change icon. Pick from an icon pack, a photo on the TV, or a link to a PNG."))
                 add(Note("Icon packs: install any Android TV / Projectivy icon pack from Google Play, then choose it above. Every app takes the pack's icon; you can still change single apps."))
                 add(Act("Find icon packs on Google Play", "Projectivy / Android TV icon packs", "") { openPlay(ctx, null, "projectivy icon pack") })

@@ -135,6 +135,11 @@ class Settings(private val ctx: Context) {
     var transitionMs: Int get() = i("transitionMs", 700); set(v) { putI("transitionMs", v.coerceIn(100, 2000)); userTuned() }
     var dotsAutoHide: Boolean get() = b("dotsAutoHide", true); set(v) = putB("dotsAutoHide", v)
 
+    // ---- Top Shelf (the backdrop follows the selected app in the dock, like Apple TV)
+    var topShelf: Boolean get() = b("topShelf", true); set(v) = putB("topShelf", v)
+    /** Use the rows apps publish for the Android TV home screen (needs READ_TV_LISTINGS, asked when switched on). */
+    var topShelfAppRows: Boolean get() = b("topShelfAppRows", false); set(v) = putB("topShelfAppRows", v)
+
     // ---- Clock / dock look
     var topAutoHide: Boolean get() = b("topAutoHide", false); set(v) = putB("topAutoHide", v)
     var topHideSec: Int get() = i("topHideSec", 5); set(v) = putI("topHideSec", v.coerceIn(2, 30))

@@ -4,6 +4,9 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <!-- Top Shelf: read the rows other apps publish for the Android TV home screen. Asked for only when
+         "Top Shelf: use apps' own rows" is switched on (off by default). -->
+    <uses-permission android:name="android.permission.READ_TV_LISTINGS"/>
     <uses-feature android:name="android.software.leanback" android:required="false"/>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
 
@@ -17,6 +20,8 @@
         <package android:name="com.nuvio.tv"/>
         <package android:name="space.nuvio.nativelegacy"/>
         <package android:name="com.nuvioreshaped.tv"/>
+        <!-- The Android TV provider (preview programs), for Top Shelf. -->
+        <provider android:authorities="android.media.tv"/>
     </queries>
 
     <application

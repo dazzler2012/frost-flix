@@ -135,6 +135,10 @@ private fun imgReq(ctx: android.content.Context, data: Any?, w: Int = 1920, h: I
 /** A logo request; the same one for preloading and for drawing, so both hit the same memory cache entry. */
 private fun logoReq(ctx: android.content.Context, url: String) = imgReq(ctx, url, 1000, 400, prepare = true)
 
+/** Top Shelf: how long focus rests on a dock app before its picture comes, and its (slow) crossfade. */
+private const val SHELF_SETTLE_MS = 350L
+private const val SHELF_FADE_MS = 900
+
 private fun Modifier.clipR(r: Dp): Modifier = this.clip(RoundedCornerShape(r))
 
 /** Every dock measurement in dp, from the screen width and the "Dock size" setting (1.0 = full width). */
@@ -160,7 +164,16 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
     val settings = app.settings
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var backdrop by remember { mutableStateOf<String?>(null) }
+    // The carousel's picture, and the Top Shelf picture of the selected dock app (wins while set).
+    var heroBackdrop by remember { mutableStateOf<String?>(null) }
+    // The dock app that is selected (Top Shelf on). Read only by the effect below, never in composition, so
+    // moving along the dock doesn't recompose this screen.
+    val shelfPkg = remember { mutableStateOf<String?>(null) }
+    val screenNow = androidx.compose.runtime.rememberUpdatedState(screen)
+    var shelfUrl by remember { mutableStateOf<String?>(null) }
+    val backdrop = shelfUrl ?: heroBackdrop
+    // The last picture change involved the Top Shelf (to it, between apps, or back to the carousel): slow fade.
+    var shelfFade by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
     var movingPkg by remember { mutableStateOf<String?>(null) }
     var dialog by remember { mutableStateOf<DialogState?>(null) }
@@ -227,7 +240,13 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         }
         if (fullBmp == null) return@LaunchedEffect
         val first = backImgs == null
-        fadeMs = if (app.browsing()) 220 else settings.transitionMs
+        fadeMs = when {
+            shelfFade -> SHELF_FADE_MS
+            app.browsing() -> 220
+            else -> settings.transitionMs
+        }
+        // Back on the carousel: only this first change fades slowly.
+        if (shelfUrl == null) shelfFade = false
         val (bw, bh) = bakeSize(ctx)
         val src = fullBmp
         val baked = images.getBaked(u, src) ?: bakeCached(images, u, src, bw, bh)
@@ -254,6 +273,28 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
             val b = withContext(ImageCaches.bakeDispatcher) { bakeBackdrop(hi, bw, bh).also { halfOf(images, it) } }
             fadeMs = 0; shownBackdrop = b
         } }
+    }
+    // Top Shelf: once focus has rested on a dock app for a moment, its pictures replace the carousel's, one
+    // after another at the slide time while it stays selected. Pictures are prepared off the main thread
+    // and go through the same bake / glass / crossfade as a slide.
+    LaunchedEffect(Unit) {
+        androidx.compose.runtime.snapshotFlow { shelfPkg.value }.collectLatest { pkg ->
+            if (pkg == null) { if (shelfUrl != null) { shelfFade = true; shelfUrl = null }; return@collectLatest }
+            delay(SHELF_SETTLE_MS)
+            val e = app.apps.apps.value.firstOrNull { it.pkg == pkg } ?: return@collectLatest
+            val pics = runCatching { app.topShelf.pictures(e) }.getOrDefault(emptyList())
+            if (pics.isEmpty()) return@collectLatest
+            var i = 0
+            while (true) {
+                shelfFade = true
+                shelfUrl = pics[i % pics.size]
+                if (pics.size < 2) break
+                delay((settings.heroIntervalSec * 1000L).coerceAtLeast(4000L))
+                // Settings in front: the next picture waits until the home screen is back.
+                androidx.compose.runtime.snapshotFlow { screenNow.value }.first { it == Screen.Home }
+                i++
+            }
+        }
     }
     // Glass like glass: a short ripple after every move in the dock.
     val wobble = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -357,8 +398,9 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
                     }
                     .focusGroup()
             ) {
-                HeroSection(app, s, hidden = expanded || folderOpen, paused = screen != Screen.Home, metrics = metrics, shownUrl = shownUrl,
-                    heroFocus = heroFocus, firstTile = firstTile, onBackdrop = { backdrop = it })
+                HeroSection(app, s, hidden = expanded || folderOpen || shelfUrl != null, paused = screen != Screen.Home, metrics = metrics, shownUrl = shownUrl,
+                    heroFocus = heroFocus, firstTile = firstTile, onBackdrop = { heroBackdrop = it },
+                    onHeroFocus = { shelfPkg.value = null })
                 TopBar(app, s, onSettings = { onScreen(Screen.Settings) }, modifier = Modifier.fillMaxWidth().align(Alignment.TopStart))
                 if (app.homeServiceOff.value) HomeServiceBanner(app, s, Modifier.align(Alignment.TopCenter).padding(top = (16 * s).dp))
                 Dock(
@@ -369,6 +411,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
                     onMenu = { showMenu(it, false) },
                     onFolder = { folderOpen = true },
                     onFolderMenu = { dialog = MenuDialog("Apps", listOf("Move" to { movingPkg = FOLDER })) },
+                    onShelf = { p -> shelfPkg.value = if (settings.topShelf) p else null },
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
             }
@@ -583,6 +626,7 @@ private fun HeroSection(
     app: GlassApp, s: Float, hidden: Boolean, paused: Boolean, metrics: DockMetrics,
     heroFocus: FocusRequester, firstTile: FocusRequester, onBackdrop: (String?) -> Unit,
     shownUrl: androidx.compose.runtime.State<String?> = androidx.compose.runtime.mutableStateOf(null),
+    onHeroFocus: () -> Unit = {},
 ) {
     val settings = app.settings
     val ctx = LocalContext.current
@@ -742,7 +786,7 @@ private fun HeroSection(
         if (shown != null) {
             HeroInfo(
                 item = shown, app = app, s = s, focused = focused, heroFocus = heroFocus, firstTile = firstTile,
-                onFocus = { focused = it },
+                onFocus = { focused = it; if (it) onHeroFocus() },
                 onPrev = { app.navAt = System.currentTimeMillis(); index-- }, onNext = { app.navAt = System.currentTimeMillis(); index++ },
                 onOpen = { NuvioLaunch.open(ctx, settings, shown) },
                 onLong = {
@@ -759,7 +803,7 @@ private fun HeroSection(
                 modifier = Modifier.align(Alignment.TopStart).then(fade),
             )
         } else {
-            EmptyHint(status, s, heroFocus, firstTile, Modifier.align(Alignment.TopStart).then(fade)) {
+            EmptyHint(status, s, heroFocus, firstTile, Modifier.align(Alignment.TopStart).then(fade), onHeroFocus) {
                 app.requestSettings.intValue = CATALOGS_CATEGORY; app.requestSettingsRev.intValue++
             }
         }
@@ -781,7 +825,7 @@ private fun HeroSection(
 @Composable
 private fun EmptyHint(
     status: String, s: Float, heroFocus: FocusRequester, firstTile: FocusRequester,
-    modifier: Modifier, onCatalogs: () -> Unit,
+    modifier: Modifier, onFocus: () -> Unit, onCatalogs: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (focused) 1.06f else 1f, spring(0.6f, 450f), label = "hintBtn")
@@ -800,7 +844,7 @@ private fun EmptyHint(
                 .graphicsLayer { scaleX = scale; scaleY = scale }
                 .focusRequester(heroFocus)
                 .focusProperties { down = firstTile }
-                .onFocusChanged { focused = it.isFocused }
+                .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
                 .tvPress(onClick = onCatalogs)
                 .clip(RoundedCornerShape(50))
                 .background(if (focused) Color.White.copy(alpha = 0.95f) else Color.White.copy(alpha = 0.14f))
@@ -1180,7 +1224,7 @@ private fun Dock(
     expanded: Boolean, onExpanded: (Boolean) -> Unit,
     movingPkg: String?, onMoveKey: (KeyEvent) -> Boolean, firstTile: FocusRequester, heroFocus: FocusRequester,
     folderFocus: FocusRequester, tileFocus: HashMap<String, FocusRequester>, onMove: () -> Unit,
-    onMenu: (AppEntry) -> Unit, onFolder: () -> Unit, onFolderMenu: () -> Unit, modifier: Modifier,
+    onMenu: (AppEntry) -> Unit, onFolder: () -> Unit, onFolderMenu: () -> Unit, onShelf: (String?) -> Unit, modifier: Modifier,
 ) {
     val ctx = LocalContext.current
     val settings = app.settings
@@ -1238,7 +1282,7 @@ private fun Dock(
                                 FolderTile(
                                     app, s, radius, moving = movingPkg == FOLDER,
                                     modifier = base.focusRequester(folderFocus),
-                                    onFocus = { f -> if (f) { onExpanded(r > 0); onMove() } },
+                                    onFocus = { f -> if (f) { onExpanded(r > 0); onMove(); onShelf(null) } },
                                     onMoveKey = onMoveKey, onClick = onFolder, onLong = onFolderMenu, edges = edges,
                                 )
                             }
@@ -1246,7 +1290,7 @@ private fun Dock(
                             DockTile(
                                 entry = e, app = app, s = s, radius = radius, moving = movingPkg == e.pkg,
                                 modifier = base.focusRequester(tileFocus.getOrPut(e.pkg) { FocusRequester() }),
-                                onFocus = { f -> if (f) { onExpanded(r > 0); onMove() } },
+                                onFocus = { f -> if (f) { onExpanded(r > 0); onMove(); onShelf(e.pkg) } },
                                 onMoveKey = onMoveKey,
                                 onClick = { app.apps.launchIntent(e)?.let { runCatching { ctx.startActivity(it) } } },
                                 onLong = { onMenu(e) }, edges = edges,
