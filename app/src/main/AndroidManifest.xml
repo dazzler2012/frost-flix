@@ -27,8 +27,8 @@
     <application
         android:name=".GlassApp"
         android:allowBackup="false"
-        android:banner="@drawable/ic_banner_glass"
-        android:icon="@drawable/ic_launcher_glass"
+        android:banner="@drawable/ic_banner_frost"
+        android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.Glass"
         android:usesCleartextTraffic="false"

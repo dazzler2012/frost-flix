@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d12`. `versionCode` is 36 (upstream 25).
+- `versionName` changed to `1.9.3-d13`. `versionCode` is 37 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -280,3 +280,14 @@ Goal: fewer slow frames on the Shield (UI thread) and fewer offscreen GPU textur
 - **First fetch:** after updating from d10, the watchlist waited up to 30 minutes, because the 30-minute timer still counted from the last Continue Watching update. The row stayed hidden until then. Now, when the watchlist has never been fetched, the next automatic check fetches it at once (the backoff after a failure still applies).
 - **Label:** the selected card rose and grew over the dim "Watchlist" label. There is now room under the label for the lift, and the dock's height includes it.
 - **Setting:** switching "Watchlist row" on already fetched at once (inside the same lock as every other update); unchanged.
+
+## App icon and TV banner (1.9.3-d13)
+
+- **New, original icon:** a frosted-glass rounded square on a deep navy background with a soft blue-white glow, a white-to-ice-blue play triangle and a small snowflake. It replaces the Glassio icon and banner.
+- **Adaptive icon:** `mipmap-anydpi-v26/ic_launcher.xml` with vector layers `ic_launcher_background`, `ic_launcher_foreground` and `ic_launcher_monochrome` (for Android 13 themed icons). The manifest's `android:icon` is now `@mipmap/ic_launcher`.
+- **Legacy icons:** PNG `ic_launcher` in `mipmap-mdpi` to `mipmap-xxxhdpi` (48–192 px). With minSdk 26 Android itself always uses the adaptive icon; the PNGs are there for tools and launchers that read plain bitmaps.
+- **TV banner:** `drawable/ic_banner_frost.xml`, a 320×180 vector with the icon and the name "Frost-flix" (Inter SemiBold, as paths). The manifest's `android:banner` points to it.
+- **Removed:** `drawable-nodpi/ic_launcher_glass.png`, `drawable-xhdpi/ic_banner_glass.png` and the unused `drawable/ic_launcher.xml` and `drawable/ic_banner.xml`.
+- **Source:** `tools/brand_icons.py` writes the vector drawables and matching SVGs in `docs/brand/src/` from one set of shapes. `tools/brand_render.js` (Playwright) renders the legacy PNGs, `docs/brand/frost-flix-icon-512.png` and `docs/brand/frost-flix-banner.png` (1280×720). README.md shows the icon at the top.
+- **Kept:** `docs/brand/icon_512.png` and `docs/brand/banner_1280x720.png` are Glassio's own images, used only by the archived upstream README in `docs/upstream/`.
+- **Not verified on the TV:** how the icon and banner look on the Shield or Google TV home screen. Checked only as rendered PNG previews.
