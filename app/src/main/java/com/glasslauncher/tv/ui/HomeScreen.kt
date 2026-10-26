@@ -1236,6 +1236,11 @@ private fun Dock(
         apps.toMutableList<AppEntry?>().apply { add(p, null) }
     }
     val rows = remember(items) { items.chunked(DOCK_COLUMNS) }
+    // Trakt Watchlist: one row under the apps, only reached by scrolling down (the first screen is unchanged).
+    val watchAll by app.cw.watchItems.collectAsState()
+    val traktState by app.trakt.state.collectAsState()
+    val watch = if (settings.watchlistRow && traktState == com.glasslauncher.tv.data.Trakt.State.SignedIn) watchAll else emptyList()
+    val watchH = if (watch.isEmpty()) 0f else metrics.gap + WATCH_HEADER * s + metrics.cellW / (16f / 9f)
     // Move mode: a moved tile is laid out again in its new slot and loses focus, which then fell to the
     // carousel. Keep focus on the app being moved after every step.
     LaunchedEffect(items, movingPkg) {
@@ -1243,7 +1248,7 @@ private fun Dock(
         delay(30)
         runCatching { (if (p == FOLDER) folderFocus else tileFocus[p])?.requestFocus() }
     }
-    val fullH = metrics.padTop + rows.size * metrics.cellH + (rows.size - 1).coerceAtLeast(0) * metrics.gap + metrics.padBottom + 8 * s
+    val fullH = metrics.padTop + rows.size * metrics.cellH + (rows.size - 1).coerceAtLeast(0) * metrics.gap + watchH + metrics.padBottom + 8 * s
     val expandedH = minOf(fullH, screenH * 0.72f).coerceAtLeast(metrics.collapsedH)
     val targetH = if (expanded) expandedH else metrics.collapsedH
     val hState = animateDpAsState(targetH.dp, tween(280, easing = FastOutSlowInEasing), label = "dockH")
@@ -1273,7 +1278,7 @@ private fun Dock(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(metrics.gap.dp)) {
                     row.forEachIndexed { c, e ->
                         val idx = r * DOCK_COLUMNS + c
-                        val edges = gridEdges(c, row.size, r, rows.size, allowUp = true)
+                        val edges = gridEdges(c, row.size, r, rows.size, allowUp = true).let { if (watch.isNotEmpty()) it - androidx.compose.ui.focus.FocusDirection.Down else it }
                         val base = Modifier.weight(1f)
                             .then(if (idx == 0) Modifier.focusRequester(firstTile) else Modifier)
                             .then(if (r == 0) Modifier.focusProperties { up = heroFocus } else Modifier)
@@ -1298,6 +1303,78 @@ private fun Dock(
                         }
                     }
                     repeat(DOCK_COLUMNS - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+            if (watch.isNotEmpty()) WatchlistRow(app, s, metrics, radius, watch, onFocus = { onExpanded(true); onMove(); onShelf(null) })
+        }
+    }
+}
+
+private const val WATCH_HEADER = 16f
+
+/**
+ * The Trakt Watchlist under the app grid: landscape backdrops in the same glass plates, lift and bounce as the
+ * app tiles. No text at rest; the title appears on the selected card. OK opens the title in Nuvio.
+ */
+@Composable
+private fun WatchlistRow(app: GlassApp, s: Float, metrics: DockMetrics, radius: Int, items: List<HeroItem>, onFocus: () -> Unit) {
+    val ctx = LocalContext.current
+    val settings = app.settings
+    val enriched by app.catalogs.enrichedItems.collectAsState()
+    val keys = remember(items) { items.map { it.key } }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val lifeState by lifecycle.currentStateFlow.collectAsState()
+    val started = lifeState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+    // TMDB pictures for titles whose add-on had none (cached per title, like Continue Watching).
+    LaunchedEffect(keys, settings.tmdbToken, started) { if (started) items.forEach { app.catalogs.enrich(it) } }
+    val density = LocalDensity.current
+    val cardW = metrics.cellW
+    val cardH = cardW / (16f / 9f)
+    // Decoded at the drawn size of a selected card (1.09x), not at full backdrop size.
+    val reqW = with(density) { (cardW * 1.1f).dp.roundToPx() }
+    val reqH = with(density) { (cardH * 1.1f).dp.roundToPx() }
+    Column(Modifier.fillMaxWidth().padding(top = metrics.gap.dp)) {
+        Text("Watchlist", color = Color.White.copy(alpha = 0.6f), fontSize = (10 * s).sp, fontWeight = FontWeight.Medium,
+            modifier = Modifier.height((WATCH_HEADER * s).dp).padding(start = (2 * s).dp))
+        androidx.compose.foundation.lazy.LazyRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(metrics.gap.dp),
+        ) {
+            items(items.size, key = { items[it].key }) { i ->
+                val raw = items[i]
+                val item = enriched[raw.key]?.let { e -> e.copy(key = raw.key, id = raw.id, type = raw.type) } ?: raw
+                val pic = item.background.ifBlank { raw.background }.takeIf { it.isNotBlank() }?.let { sized(it, "w780") }
+                val req = remember(pic, reqW, reqH) { pic?.let { imgReq(ctx, it, reqW, reqH) } }
+                val edges = buildSet {
+                    if (i == 0) add(androidx.compose.ui.focus.FocusDirection.Left)
+                    if (i == items.size - 1) add(androidx.compose.ui.focus.FocusDirection.Right)
+                    add(androidx.compose.ui.focus.FocusDirection.Down)
+                }
+                TileFrame(
+                    s, radius, moving = false, label = item.name, alwaysLabel = false,
+                    modifier = Modifier.width(cardW.dp),
+                    onFocus = { if (it) onFocus() }, onMoveKey = { false },
+                    onClick = { NuvioLaunch.open(ctx, settings, item) }, onLong = {},
+                    solid = settings.tileStyle == "amoled" || settings.tileStyle == "bow",
+                    lift = settings.tileLift, bounce = settings.edgeBounce, edges = edges, aspect = 16f / 9f,
+                ) { focused, r ->
+                    TilePlate(settings.tileStyle, focused, s, r) {
+                        if (req != null) AsyncImage(model = req, contentDescription = item.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        else Text(item.name, color = Color.White, fontSize = (10 * s).sp, maxLines = 2, textAlign = TextAlign.Center,
+                            modifier = Modifier.padding((6 * s).dp))
+                        if (req != null) {
+                            val a by animateFloatAsState(if (focused) 1f else 0f, tween(180), label = "watchTitle")
+                            Box(
+                                Modifier.fillMaxSize().graphicsLayer { alpha = a }
+                                    .background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.78f))),
+                                contentAlignment = Alignment.BottomStart,
+                            ) {
+                                Text(item.name, color = Color.White, fontSize = (9.5f * s).sp, fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = (7 * s).dp, vertical = (5 * s).dp))
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1422,6 +1499,7 @@ private fun TileFrame(
     bounce: Boolean = true,
     /** Directions with no neighbour inside the grid: pressing them bounces instead of moving focus. */
     edges: Set<androidx.compose.ui.focus.FocusDirection> = emptySet(),
+    aspect: Float = 1.6f,
     plate: @Composable (focused: Boolean, radius: Dp) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -1476,7 +1554,7 @@ private fun TileFrame(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(1.6f)
+            Modifier.fillMaxWidth().aspectRatio(aspect)
                 .offset { androidx.compose.ui.unit.IntOffset((nudge.value.x * density).toInt(), rise.roundToPx() + (nudge.value.y * density).toInt()) }
                 .graphicsLayer {
                     scaleX = scale; scaleY = scale

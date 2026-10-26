@@ -192,6 +192,8 @@ class Settings(private val ctx: Context) {
     /** How many titles in progress open the carousel (0 = all); the rest mix in with the catalogs. */
     var cwLead: Int get() = i("cwLead", 1); set(v) = putI("cwLead", v)
     var cwProgress: Boolean get() = b("cwProgress", true); set(v) = putB("cwProgress", v)
+    /** The Trakt Watchlist row under the app grid (only while signed in to Trakt). */
+    var watchlistRow: Boolean get() = b("watchlistRow", true); set(v) = putB("watchlistRow", v)
 
     // ---- Nuvio
     /** auto | nuviotv | legacy | reshaped. "auto" opens titles in whichever Nuvio is installed, NuvioTV first. */

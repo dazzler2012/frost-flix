@@ -27,8 +27,9 @@ data class CwEntry(
 
 /**
  * Continue Watching from Trakt: in-progress movies and episodes (/sync/playback) plus the next episode of
- * shows you are partway through (/sync/progress/watched). Results are cached in app-private storage and
- * fetched on app start and at most every 30 minutes. Pictures come from your add-ons and TMDB.
+ * shows you are partway through (/sync/progress/watched). Also the Trakt watchlist (/sync/watchlist) for the
+ * Watchlist row, fetched with the same timing. Results are cached in app-private storage and fetched on app
+ * start and at most every 30 minutes, only while Frost-flix is in front. Pictures come from your add-ons and TMDB.
  */
 class ContinueWatching(
     ctx: Context,
@@ -43,6 +44,9 @@ class ContinueWatching(
     private val fetchLock = Mutex()
     val entries = MutableStateFlow(load())
     val items = MutableStateFlow<List<HeroItem>>(emptyList())
+    /** The Trakt watchlist (movies and shows, newest first), fetched and cached together with Continue Watching. */
+    val watchEntries = MutableStateFlow(load("watchlist"))
+    val watchItems = MutableStateFlow<List<HeroItem>>(emptyList())
     val lastFetch = MutableStateFlow(sp.getLong("fetchedAt", 0L))
     /** Why the last update failed, for Settings → Continue Watching; empty after a successful update. */
     val lastError = MutableStateFlow("")
@@ -69,19 +73,52 @@ class ContinueWatching(
      * Trakt row). After a failure the next automatic try waits 1, 2, 5, 15, then every 30 minutes.
      */
     suspend fun fetch(force: Boolean) = fetchLock.withLock {
-        if (!trakt.signedIn || settings.continueMode == "off") return@withLock
+        val wantCw = settings.continueMode != "off"
+        val wantWatchlist = settings.watchlistRow
+        if (!trakt.signedIn || (!wantCw && !wantWatchlist)) return@withLock
         val now = System.currentTimeMillis()
         if (!force) {
             if (failures > 0 && now < nextTry) return@withLock
             if (failures == 0 && now - lastFetch.value < INTERVAL_MS) return@withLock
         }
-        val playback = try {
-            JSONArray(trakt.fetch("/sync/playback"))
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            failed(e); return@withLock
+        // Each list is kept when its own request fails; a failure of either one starts the backoff.
+        var error: Exception? = null
+        var cw: List<CwEntry>? = null
+        var watch: List<CwEntry>? = null
+        if (wantCw) try { cw = fetchContinue() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { error = e }
+        if (wantWatchlist) try { watch = fetchWatchlist() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { error = error ?: e }
+        // Signed out (or the sign-in expired) while this was loading: don't bring the lists back.
+        if (!trakt.signedIn) return@withLock
+        cw?.let { entries.value = it; save(it) }
+        watch?.let { watchEntries.value = it; save(it, "watchlist") }
+        if (error != null) {
+            failed(error)
+        } else {
+            failures = 0; nextTry = 0L; lastError.value = ""
+            lastFetch.value = System.currentTimeMillis()
+            sp.edit().putLong("fetchedAt", lastFetch.value).apply()
         }
+        if (cw != null || watch != null) rebuildItems()
+    }
+
+    /** /sync/watchlist: movies and shows, newest first, at most [MAX_WATCHLIST]. */
+    private suspend fun fetchWatchlist(): List<CwEntry> {
+        val list = JSONArray(trakt.fetch("/sync/watchlist"))
+        val out = mutableListOf<CwEntry>()
+        for (i in 0 until list.length()) {
+            val o = list.optJSONObject(i) ?: continue
+            val at = time(o.optString("listed_at"))
+            when (o.optString("type")) {
+                "movie" -> o.optJSONObject("movie")?.let { m -> entry("movie", m, 0, 0, -1, at)?.let(out::add) }
+                "show" -> o.optJSONObject("show")?.let { m -> entry("series", m, 0, 0, -1, at)?.let(out::add) }
+            }
+        }
+        return out.sortedByDescending { it.at }.distinctBy { it.key }.take(MAX_WATCHLIST)
+    }
+
+    /** /sync/playback plus the next episodes from /sync/progress/watched. */
+    private suspend fun fetchContinue(): List<CwEntry> {
+        val playback = JSONArray(trakt.fetch("/sync/playback"))
         val watched = runCatching { JSONArray(trakt.fetch("/sync/progress/watched?hide_completed=true&limit=100")) }.getOrNull()
 
         val out = mutableListOf<CwEntry>()
@@ -112,15 +149,7 @@ class ContinueWatching(
             val e = entry("series", show, ep.optInt("season"), ep.optInt("number"), -1, time(p.optString("last_watched_at"))) ?: continue
             if (e.key !in keys) next += e
         }
-        val all = (paused + next.sortedByDescending { it.at }.take(MAX_NEXT)).sortedByDescending { it.at }.take(MAX_ITEMS)
-        // Signed out (or the sign-in expired) while this was loading: don't bring the list back.
-        if (!trakt.signedIn) return@withLock
-        failures = 0; nextTry = 0L; lastError.value = ""
-        entries.value = all
-        save(all)
-        lastFetch.value = System.currentTimeMillis()
-        sp.edit().putLong("fetchedAt", lastFetch.value).apply()
-        rebuildItems()
+        return (paused + next.sortedByDescending { it.at }.take(MAX_NEXT)).sortedByDescending { it.at }.take(MAX_ITEMS)
     }
 
     private fun entry(type: String, media: JSONObject, s: Int, e: Int, percent: Int, at: Long): CwEntry? {
@@ -151,6 +180,7 @@ class ContinueWatching(
     suspend fun clear() = fetchLock.withLock {
         failures = 0; nextTry = 0L; lastError.value = ""
         entries.value = emptyList(); items.value = emptyList(); save(emptyList())
+        watchEntries.value = emptyList(); watchItems.value = emptyList(); save(emptyList(), "watchlist")
         lastFetch.value = 0L; sp.edit().putLong("fetchedAt", 0L).apply()
     }
 
@@ -191,7 +221,15 @@ class ContinueWatching(
 
     private fun rebuildItems() {
         val list = entries.value
-        val addons = if (list.isEmpty()) emptyList() else metaAddons()
+        val watch = watchEntries.value
+        val addons = if (list.isEmpty() && watch.isEmpty()) emptyList() else metaAddons()
+        watchItems.value = watch.map { e ->
+            val base = meta(addons, e) ?: HeroItem(
+                key = e.key, id = e.id, type = e.type, name = e.name, poster = "", background = "", logo = "",
+                overview = "", rating = "", year = e.year, genres = emptyList(), platform = "",
+            )
+            base.copy(key = e.key, id = e.id, type = e.type, name = base.name.ifBlank { e.name })
+        }
         items.value = list.map { e ->
             val sub = if (e.type == "series") "S${e.season} · E${e.episode}" else ""
             val progress = if (e.percent < 0) 0f else e.percent / 100f
@@ -203,24 +241,25 @@ class ContinueWatching(
         }
     }
 
-    private fun load(): List<CwEntry> = runCatching {
-        val a = JSONArray(sp.getString("entries", "[]"))
+    private fun load(key: String = "entries"): List<CwEntry> = runCatching {
+        val a = JSONArray(sp.getString(key, "[]"))
         (0 until a.length()).map { i ->
             val o = a.getJSONObject(i)
             CwEntry(o.getString("t"), o.getString("id"), o.optString("n"), o.optString("y"), o.optInt("s"), o.optInt("e"), o.optInt("p"), o.optLong("at"))
         }
     }.getOrDefault(emptyList())
 
-    private fun save(l: List<CwEntry>) {
+    private fun save(l: List<CwEntry>, key: String = "entries") {
         val a = JSONArray()
         l.forEach { a.put(JSONObject().put("t", it.type).put("id", it.id).put("n", it.name).put("y", it.year).put("s", it.season).put("e", it.episode).put("p", it.percent).put("at", it.at)) }
-        sp.edit().putString("entries", a.toString()).apply()
+        sp.edit().putString(key, a.toString()).apply()
     }
 
     companion object {
         private const val INTERVAL_MS = 30L * 60 * 1000
         private const val MAX_NEXT = 10
         private const val MAX_ITEMS = 20
+        private const val MAX_WATCHLIST = 30
         /** Minutes to wait after the 1st, 2nd, 3rd, 4th and every later failed update in a row. */
         private val BACKOFF_MIN = longArrayOf(1, 2, 5, 15, 30)
     }

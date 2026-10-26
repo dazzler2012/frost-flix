@@ -252,3 +252,14 @@ Goal: fewer slow frames on the Shield (UI thread) and fewer offscreen GPU textur
   3. **Every other app, and the above when they have nothing:** a soft gradient in the main colour of the app's icon with its banner.
 - **Settings:** Dock & icons → "Top Shelf" (on by default) and "Top Shelf: use apps' own rows" (off by default).
 - **Manifest:** new permission `READ_TV_LISTINGS` (asked only when that setting is switched on) and a `<queries>` entry for the `android.media.tv` provider.
+
+## Trakt Watchlist row (1.9.3-d11)
+
+- **Where:** one row under the app grid, inside the dock. The collapsed dock still shows only the first app row, so the first screen (carousel and dock) is unchanged. The row appears when you go down into the dock and past the last app row.
+- **Data:** `GET /sync/watchlist` on `https://api.trakt.tv` (movies and shows, newest first, at most 30). Fetched together with Continue Watching: same 30-minute timing, same backoff after a failure, same pause while Frost-flix is in the background, same OK on the Trakt row to update now. If one of the two requests fails, the other list is still saved. Cached in app-private storage next to Continue Watching and cleared on sign-out or expiry. Only shown while signed in.
+- **Pictures:** from your add-ons' meta resource (not Cinemeta), then TMDB, as for Continue Watching. Cards ask TMDB for its 780 px size and are decoded at the card's drawn size.
+- **Look:** landscape (16:9) backdrop cards in the same glass plate, rounded corners, lift, grow and edge bounce as the app tiles. No text at rest; the title fades in on the selected card.
+- **OK** opens the title in Nuvio with the existing launch code (NuvioTV first).
+- **Top Shelf:** the Watchlist now also feeds the Top Shelf of NuvioTV, Stremio, Kodi and Plex.
+- **Setting:** Continue Watching → "Watchlist row" (on by default). Switching it on fetches the watchlist at once.
+- **Network:** no new host (`api.trakt.tv` as before).

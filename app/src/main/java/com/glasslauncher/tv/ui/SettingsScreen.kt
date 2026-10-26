@@ -332,12 +332,17 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                     if (st.cwLead <= 0) "All" else "${st.cwLead}"
                 }, { st.cwLead = cycle(listOf(1, 2, 3, 4, 5, 0), st.cwLead, it) }))
                 add(Toggle("Progress bar", "Shows Continue · S1 · E3 · 42% under the title", { st.cwProgress }, { st.cwProgress = it }))
+                add(Toggle("Watchlist row", "Your Trakt watchlist under the apps (scroll down in the dock)", { st.watchlistRow }, { on ->
+                    st.watchlistRow = on
+                    if (on && app.trakt.signedIn) io { app.cw.fetch(true); app.cw.lastError.value.ifBlank { "Watchlist updated" } }
+                }))
                 add(Note("Trakt"))
                 if (trakt == Trakt.State.NotConfigured) add(Note("Trakt not configured. This build has no Trakt client ID (see SETUP.md)."))
                 else {
                     // Sign-in, the code and "Signed in as …" all live in this one row, so focus never leaves the page.
                     val ago = if (fetched <= 0L) "not loaded yet" else "updated ${((System.currentTimeMillis() - fetched) / 60_000).coerceAtLeast(0)} min ago"
-                    add(TraktBox(trakt, traktUser, "${cwList.size} titles · $ago · OK updates now (otherwise at most every 30 minutes)",
+                    val watchList by app.cw.watchEntries.collectAsState()
+                    add(TraktBox(trakt, traktUser, "${cwList.size} in progress · ${watchList.size} on the watchlist · $ago · OK updates now (otherwise at most every 30 minutes)",
                         // Hidden debug action: hold OK on "Signed in as …" to refresh the Trakt token now.
                         onLong = if (trakt == Trakt.State.SignedIn) ({ io { "Force Trakt refresh now: " + app.trakt.forceRefresh() } }) else null,
                     ) {
@@ -345,8 +350,8 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                             Trakt.State.Checking -> Unit
                             Trakt.State.Starting, is Trakt.State.Waiting -> app.trakt.cancelSignIn()
                             Trakt.State.SignedIn -> io {
-                                if (st.continueMode == "off") "Continue Watching is off"
-                                else { app.cw.fetch(true); app.cw.lastError.value.ifBlank { "Continue Watching updated" } }
+                                if (st.continueMode == "off" && !st.watchlistRow) "Continue Watching and the Watchlist row are off"
+                                else { app.cw.fetch(true); app.cw.lastError.value.ifBlank { "Updated from Trakt" } }
                             }
                             else -> app.trakt.startSignIn()
                         }
