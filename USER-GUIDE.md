@@ -47,7 +47,9 @@ What it isn't:
 - **NuvioTV**. Its official source is the [NuvioMedia/NuvioTV repository on GitHub](https://github.com/NuvioMedia/NuvioTV), which offers an Android TV APK under Releases and also links a Google Play listing.
   - **Use the APK from GitHub Releases.** Frost-flix looks for the package `com.nuvio.tv`. According to NuvioTV's build file, the Google Play build uses a different package (`com.nuvio.app`), so Frost-flix would probably not find it. *(Unverified on a TV.)*
 - **An icon pack** (optional). Any Projectivy, Blueprint or Nova icon pack installed on the TV works. Settings has a **Find icon packs on Google Play** button.
-  - I couldn't confirm Downloader codes for specific packs, so none are listed here.
+  - Two examples, with the Downloader codes published in each pack's own README:
+    - **Projectivy Icon Pack:** Downloader code `9257057` ([source](https://github.com/SicMundus86/ProjectivyIconPack)).
+    - **Core Builds Icon Pack:** Downloader code `5270601` ([source](https://github.com/brevityA/CoreBuildsApps)).
 
 ### Accounts (both optional, both free)
 
@@ -203,7 +205,6 @@ This page fills the carousel.
   1. In Nuvio, open **Add-ons → Manage from phone** and leave it open.
   2. In Frost-flix, choose **Connect to Nuvio**.
   3. It says how many add-ons and catalogs it imported.
-  - *(Not tested on a device.)*
 - **Add add-on link:** paste a catalog add-on's manifest link.
   - **Only `https://` links work** (or `stremio://`).
   - `http://` links are blocked.
