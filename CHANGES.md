@@ -25,7 +25,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `data/Updater.kt` deleted: GitHub release checks, APK download, install through adb or `PackageInstaller`, and `InstallResultReceiver`.
 - The update banner and the update pill next to the clock were removed from `ui/HomeScreen.kt`.
-- The "Check for updates" and "Install update" rows were removed from Settings → About. About now shows the version and a QR code linking to the original project.
+- The "Check for updates" and "Install update" rows were removed from Settings → About. About now shows the version and a QR code (since 1.9.3-d11: linking to this repository's source code).
 - `REQUEST_INSTALL_PACKAGES` permission and the receiver were removed from the manifest.
 
 ## Removed: WRITE_SECURE_SETTINGS
@@ -129,7 +129,7 @@ Continue Watching is back, but fed from Trakt instead of reading Nuvio's log ove
 ## Renamed to Frost-flix
 
 - The visible name is now "Frost-flix": app label, launcher name, accessibility service and its description, the empty-carousel title, Settings and About texts.
-- About still credits Glassio by mohammadmrh12 and links to the original repository. So do README.md and CREDITS.md.
+- About still credits Glassio by mohammadmrh12. README.md and CREDITS.md credit it and link to the original repository. (Up to 1.9.3-d10 the About QR code also pointed there.)
 - Releases are titled "Frost-flix v…" and the APK is `frost-flix.apk` (was `glassio-d.apk`). The CI artifact is `frost-flix-unsigned`.
 - Unchanged on purpose: the `applicationId` `tv.darren.glassio`, the Kotlin package `com.glasslauncher.tv`, the Keystore alias of the Trakt tokens, and the signing key file and alias. The update installs over the existing app and keeps its settings and Trakt sign-in.
 
@@ -227,3 +227,10 @@ Goal: fewer slow frames on the Shield (UI thread) and fewer offscreen GPU textur
 - **Frames line shows where the worst frame went:** frame number, seconds after opening, and its parts: "wait" (the UI thread was busy before the frame), "UI" (composition, layout, drawing), "upload" (pictures handed to the GPU) and "GPU". The first frame after opening is now always the first frame after ON_START, flagged by Android or not, with the same parts.
 - **Smaller fixes that can cause single slow frames:** the app list is scanned off the main thread when an app is installed, updated or removed (was on the main thread). Dock icons are handed to the GPU as soon as they are made (`prepareToDraw`), not in the frame that first shows them.
 - **Glass pictures (21 → 90 tracked):** not the crossfade, which holds only the current and previous set (6 bitmaps). The glass copies were kept up to a 36 MB budget, about 30 slides, so the count grew with every slide you passed until the budget was full. Now the cache keeps the slides that are prepared ahead plus 4 ("Prepare ahead" + current, fading out, next gallery picture, one spare): 7 backdrops (about 8 MB) in Balanced mode. The look is the same. Going back more than "Prepare ahead" slides makes their glass again from the picture cache. The Memory line shows the count as "glass N" (was MB).
+
+## About page (1.9.3-d11)
+
+- **QR code:** now `https://github.com/dazzler2012/frost-flix` (this copy's source code, as GPL-3.0 asks), still made on the TV. Caption: "github.com/dazzler2012/frost-flix · Source code".
+- **Title line:** "Frost-flix <version>". Hold OK on it for the hidden Memory and Frames lines, as before.
+- **Credits line:** "Frost-flix by Darren · Based on Glassio by mohammadmrh12 · GPL-3.0 · Fonts: Inter (SIL OFL) · Weather: Open-Meteo · This product uses the TMDB API but is not endorsed or certified by TMDB." (was "Made by Mohammad · …").
+- Unchanged: the original author's credit and link in CREDITS.md and README.md, and the `LICENSE` file.

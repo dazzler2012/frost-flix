@@ -452,8 +452,8 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
     DialogHost(dialog) { dialog = null }
 }
 
-/** The original Glassio project (credited in About). */
-private const val UPSTREAM_REPO = "mohammadmrh12/glassio"
+/** This app's source code (GPL-3.0), shown as a QR code in About. */
+private const val SOURCE_REPO = "dazzler2012/frost-flix"
 
 private suspend fun delay150() = kotlinx.coroutines.delay(150)
 
@@ -633,12 +633,12 @@ private fun rememberQr(text: String, sizePx: Int, margin: Int = 2): ImageBitmap?
         value = withContext(Dispatchers.Default) { runCatching { BitmapTracker.track(com.glasslauncher.tv.net.Net.qr(text, sizePx, margin).asImageBitmap(), "qr") }.getOrNull() }
     }.value
 
-/** Version, the original project's page as a QR code, credits and the last crash (if any). */
+/** Version, the source code's page as a QR code, credits and the last crash (if any). */
 @Composable
 private fun AboutPane(app: GlassApp, s: Float, onApp: (com.glasslauncher.tv.data.AppEntry) -> Unit) {
     val ctx = LocalContext.current
     val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?" }
-    val qr = rememberQr("https://github.com/$UPSTREAM_REPO", 420)
+    val qr = rememberQr("https://github.com/$SOURCE_REPO", 420)
     val crash = remember { java.io.File(ctx.filesDir, "last-crash.txt").takeIf { it.exists() }?.readText()?.lineSequence()?.take(2)?.joinToString(" · ").orEmpty() }
     // Hidden: hold OK on the version for the Memory line (refreshed every 3 s while shown).
     var showMemory by remember { mutableStateOf(false) }
@@ -654,17 +654,17 @@ private fun AboutPane(app: GlassApp, s: Float, onApp: (com.glasslauncher.tv.data
                 qr?.let { Image(it, "GitHub", Modifier.fillMaxSize()) }
             }
             Spacer(Modifier.height((6 * s).dp))
-            Text("github.com/$UPSTREAM_REPO", color = Color.White.copy(alpha = 0.75f), fontSize = (9.5f * s).sp)
+            Text("github.com/$SOURCE_REPO · Source code", color = Color.White.copy(alpha = 0.75f), fontSize = (9.5f * s).sp)
             Text("Scan with your phone", color = Color.White.copy(alpha = 0.5f), fontSize = (9 * s).sp)
         }
         val rows = buildList<SRow> {
-            add(Act("Frost-flix $version", "Based on Glassio by mohammadmrh12 (GPL-3.0), no self-updates", "", onLong = { showMemory = !showMemory }) {})
+            add(Act("Frost-flix $version", "No self-updates", "", onLong = { showMemory = !showMemory }) {})
             if (showMemory) {
                 add(Note("Memory now · " + memory.ifBlank { "measuring…" }))
                 add(Note(com.glasslauncher.tv.FrameStats.describe()))
                 add(Note(app.lastBackground.ifBlank { "Memory in the background: not measured yet (it is noted ~5 s after another app comes to the front)" }))
             }
-            add(Note("Made by Mohammad · Fonts: Inter (SIL OFL) · Weather: Open-Meteo · This product uses the TMDB API but is not endorsed or certified by TMDB."))
+            add(Note("Frost-flix by Darren · Based on Glassio by mohammadmrh12 · GPL-3.0 · Fonts: Inter (SIL OFL) · Weather: Open-Meteo · This product uses the TMDB API but is not endorsed or certified by TMDB."))
             if (crash.isNotBlank()) add(Act("Last crash", crash.take(120), "Clear") { java.io.File(ctx.filesDir, "last-crash.txt").delete(); toast(ctx, "Cleared") })
         }
         LazyColumn(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy((4 * s).dp)) {
