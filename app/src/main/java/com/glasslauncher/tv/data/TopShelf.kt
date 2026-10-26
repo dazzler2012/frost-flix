@@ -217,7 +217,7 @@ class TopShelf(
 
         /** Apps whose Top Shelf shows your Continue Watching and Watchlist. */
         val MEDIA_APPS = setOf(
-            NuvioLaunch.NUVIOTV_PKG, NuvioLaunch.LEGACY_PKG, NuvioLaunch.RESHAPED_PKG,
+            NuvioLaunch.NUVIOTV_PKG, NuvioLaunch.NUVIOTV_PLAY_PKG, NuvioLaunch.LEGACY_PKG, NuvioLaunch.RESHAPED_PKG,
             "com.stremio.one", // Stremio
             "org.xbmc.kodi", // Kodi
             "com.plexapp.android", // Plex

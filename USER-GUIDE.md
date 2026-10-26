@@ -45,7 +45,7 @@ What it isn't:
 
 - **Downloader** by AFTVnews, from Google Play. It installs Frost-flix from a web link.
 - **NuvioTV**. Its official source is the [NuvioMedia/NuvioTV repository on GitHub](https://github.com/NuvioMedia/NuvioTV), which offers an Android TV APK under Releases and also links a Google Play listing.
-  - **Use the APK from GitHub Releases.** Frost-flix looks for the package `com.nuvio.tv`. According to NuvioTV's build file, the Google Play build uses a different package (`com.nuvio.app`), so Frost-flix would probably not find it. *(Unverified on a TV.)*
+  - **Either build works.** Frost-flix looks for both the GitHub build (`com.nuvio.tv`) and the Google Play build (`com.nuvio.app`). *(The Google Play build is unverified on a TV.)*
 - **An icon pack** (optional). Any Projectivy, Blueprint or Nova icon pack installed on the TV works. Settings has a **Find icon packs on Google Play** button.
   - Two examples, with the Downloader codes published in each pack's own README:
     - **Projectivy Icon Pack:** Downloader code `9257057` ([source](https://github.com/SicMundus86/ProjectivyIconPack)).
@@ -233,7 +233,7 @@ This page fills the carousel.
 ### Nuvio
 
 - **Open titles in:** **Automatic** (default), **NuvioTV**, **Nuvio Legacy** or **Nuvio Re-Shaped**.
-  - **Automatic** tries NuvioTV first, then Nuvio Legacy, then Nuvio Re-Shaped.
+  - **Automatic** tries NuvioTV first (GitHub build, then Google Play build), then Nuvio Legacy, then Nuvio Re-Shaped.
   - *Suggested:* **Automatic**.
 - **TMDB token:** the same setting as on **Catalogs**.
 
@@ -409,7 +409,7 @@ Nothing is ever imported on its own.
 
 - This is expected. Frost-flix opens the title's page in NuvioTV, and you start playback there.
 - If NuvioTV can't open the title directly, Frost-flix opens NuvioTV instead and says so.
-- **"Nuvio is not installed"** means no supported Nuvio app was found. Install NuvioTV from its GitHub Releases (see [Apps](#apps)).
+- **"Nuvio is not installed"** means no supported Nuvio app was found. Install NuvioTV from its GitHub Releases or Google Play (see [Apps](#apps)).
 
 ### Icons look like white squares
 

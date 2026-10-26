@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d13`. `versionCode` is 37 (upstream 25).
+- `versionName` changed to `1.9.3-d14`. `versionCode` is 38 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -291,3 +291,12 @@ Goal: fewer slow frames on the Shield (UI thread) and fewer offscreen GPU textur
 - **Source:** `tools/brand_icons.py` writes the vector drawables and matching SVGs in `docs/brand/src/` from one set of shapes. `tools/brand_render.js` (Playwright) renders the legacy PNGs, `docs/brand/frost-flix-icon-512.png` and `docs/brand/frost-flix-banner.png` (1280×720). README.md shows the icon at the top.
 - **Kept:** `docs/brand/icon_512.png` and `docs/brand/banner_1280x720.png` are Glassio's own images, used only by the archived upstream README in `docs/upstream/`.
 - **Not verified on the TV:** how the icon and banner look on the Shield or Google TV home screen. Checked only as rendered PNG previews.
+
+## NuvioTV from Google Play (1.9.3-d14)
+
+- **Fixed:** "Nuvio is not installed" with NuvioTV from Google Play. NuvioTV's `playstore` build uses the package `com.nuvio.app` instead of `com.nuvio.tv`.
+- **Checked in NuvioTV's source** (`NuvioMedia/NuvioTV`, commit `224cf9f`): the `nuvio://` intent filter is in the shared `main` manifest, the `playstore` manifest does not remove it, and `DeepLinkParser` is shared by both builds. So `nuvio://meta?type=…&id=…` works the same in both.
+- **Automatic** now tries `com.nuvio.tv`, then `com.nuvio.app`, then Nuvio Legacy, then Nuvio Re-Shaped. The "NuvioTV" choice covers both packages, GitHub build first.
+- `com.nuvio.app` was added to `<queries>` in the manifest, to the preferred apps list and to the Top Shelf apps.
+- No new permission and no new network host.
+- **Not verified on the TV:** opening a title in the Google Play build.
