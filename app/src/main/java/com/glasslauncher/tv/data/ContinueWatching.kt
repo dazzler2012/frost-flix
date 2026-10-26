@@ -77,9 +77,12 @@ class ContinueWatching(
         val wantWatchlist = settings.watchlistRow
         if (!trakt.signedIn || (!wantCw && !wantWatchlist)) return@withLock
         val now = System.currentTimeMillis()
+        // The watchlist was never fetched (first start after updating from a version without it): don't wait
+        // for the 30 minutes, which still count from the last Continue Watching update.
+        val firstWatchlist = wantWatchlist && !sp.contains("watchlist")
         if (!force) {
             if (failures > 0 && now < nextTry) return@withLock
-            if (failures == 0 && now - lastFetch.value < INTERVAL_MS) return@withLock
+            if (failures == 0 && !firstWatchlist && now - lastFetch.value < INTERVAL_MS) return@withLock
         }
         // Each list is kept when its own request fails; a failure of either one starts the backoff.
         var error: Exception? = null

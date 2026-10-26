@@ -1240,7 +1240,7 @@ private fun Dock(
     val watchAll by app.cw.watchItems.collectAsState()
     val traktState by app.trakt.state.collectAsState()
     val watch = if (settings.watchlistRow && traktState == com.glasslauncher.tv.data.Trakt.State.SignedIn) watchAll else emptyList()
-    val watchH = if (watch.isEmpty()) 0f else metrics.gap + WATCH_HEADER * s + metrics.cellW / (16f / 9f)
+    val watchH = if (watch.isEmpty()) 0f else metrics.gap + WATCH_HEADER * s + watchLift(s, metrics.cellW / (16f / 9f)) + metrics.cellW / (16f / 9f)
     // Move mode: a moved tile is laid out again in its new slot and loses focus, which then fell to the
     // carousel. Keep focus on the app being moved after every step.
     LaunchedEffect(items, movingPkg) {
@@ -1312,6 +1312,9 @@ private fun Dock(
 
 private const val WATCH_HEADER = 16f
 
+/** Room above the cards for a selected card's rise (7) and growth (1.09x, half of it upwards), so it never covers the label. */
+private fun watchLift(s: Float, cardH: Float) = 7 * s + cardH * 0.045f
+
 /**
  * The Trakt Watchlist under the app grid: landscape backdrops in the same glass plates, lift and bounce as the
  * app tiles. No text at rest; the title appears on the selected card. OK opens the title in Nuvio.
@@ -1336,6 +1339,7 @@ private fun WatchlistRow(app: GlassApp, s: Float, metrics: DockMetrics, radius: 
     Column(Modifier.fillMaxWidth().padding(top = metrics.gap.dp)) {
         Text("Watchlist", color = Color.White.copy(alpha = 0.6f), fontSize = (10 * s).sp, fontWeight = FontWeight.Medium,
             modifier = Modifier.height((WATCH_HEADER * s).dp).padding(start = (2 * s).dp))
+        Spacer(Modifier.height(watchLift(s, cardH).dp))
         androidx.compose.foundation.lazy.LazyRow(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(metrics.gap.dp),

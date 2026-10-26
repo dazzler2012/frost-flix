@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d11`. `versionCode` is 35 (upstream 25).
+- `versionName` changed to `1.9.3-d12`. `versionCode` is 36 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -274,3 +274,9 @@ Goal: fewer slow frames on the Shield (UI thread) and fewer offscreen GPU textur
 - **Import:** only when you choose it. It lists the backup files Frost-flix can see, reads the one you pick, shows every change ("Dock size: 100% → 80%", "Custom icons: 3 (…)", "Add-on links: 2 added, 0 removed") and applies nothing until you choose "Apply these changes". Nothing is ever imported on its own; the seed.json import stays removed.
 - **Checked:** the file must say it is a Frost-flix backup in format 1 and be at most 20 MB. Only known settings are read, each with its type and the range Settings allows. Anything else is ignored and counted ("N entries were not used"). Icons must be valid pictures under 2 MB for a valid package name. Add-on links must start with `https://`. "Top Shelf: use apps' own rows" is only turned on when the permission is already granted. A bad file shows a message instead of crashing.
 - **Not verified on the TV:** after reinstalling Frost-flix, Android may no longer list backup files made by the earlier install (they belong to the old install).
+
+## Watchlist row fixes (1.9.3-d12)
+
+- **First fetch:** after updating from d10, the watchlist waited up to 30 minutes, because the 30-minute timer still counted from the last Continue Watching update. The row stayed hidden until then. Now, when the watchlist has never been fetched, the next automatic check fetches it at once (the backoff after a failure still applies).
+- **Label:** the selected card rose and grew over the dim "Watchlist" label. There is now room under the label for the lift, and the dock's height includes it.
+- **Setting:** switching "Watchlist row" on already fetched at once (inside the same lock as every other update); unchanged.
