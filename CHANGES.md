@@ -75,7 +75,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - New `res/xml/network_security_config.xml`: cleartext is off by default, and allowed only for the domain `127.0.0.1` (subdomains not included).
 - `android:usesCleartextTraffic="false"` stays in the manifest. Android ignores it when a network security config is set.
-- The only remaining `http://` URL in app code is `CatalogRepository.connectLocal()` → `http://127.0.0.1:8080-8089/api/addons` ("Connect to Nuvio"). The config allows it. Not tested on a device.
+- The only remaining `http://` URL in app code is `CatalogRepository.connectLocal()` → `http://127.0.0.1:8080-8089/api/addons` ("Connect to Nuvio"). The config allows it. Tested on an NVIDIA Shield on 25 Oct 2026 with NuvioTV (`com.nuvio.tv`): it works.
 - Icon links, add-on links and video links that start with `http://` are blocked. Use `https://`.
 
 ## Docs and build
