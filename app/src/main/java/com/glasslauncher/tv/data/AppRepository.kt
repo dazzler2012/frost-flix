@@ -34,8 +34,11 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
         "com.google.android.videos", "com.android.vending",
     )
 
+    private val scanner = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "app-scan").apply { isDaemon = true } }
+
     private val receiver = object : BroadcastReceiver() {
-        override fun onReceive(c: Context?, i: Intent?) { reload() }
+        // Arrives on the main thread; scanning every app (labels included) takes a while: never in front of a frame.
+        override fun onReceive(c: Context?, i: Intent?) { scanner.execute { runCatching { reload() } } }
     }
 
     fun start() {
@@ -195,6 +198,9 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
                 // A transparent icon's darkened copy is only kept when darkening changed something.
                 val dark = if (transparent) darkenWhites(bmp) else null
                 if (!transparent && isOpaque(bmp)) bmp = to565(bmp).also { bmp.recycle() }
+                // Upload to the GPU between frames, not in the frame that first shows the icon (every tile at once
+                // when the dock comes back).
+                bmp.prepareToDraw(); dark?.prepareToDraw()
                 val main = com.glasslauncher.tv.ui.BitmapTracker.track(bmp.asImageBitmap(), "icons")
                 Art(main, transparent, light, dark?.let { com.glasslauncher.tv.ui.BitmapTracker.track(it.asImageBitmap(), "icons") } ?: main)
                     .also { cache.put(key, it) }

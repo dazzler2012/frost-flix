@@ -18,21 +18,29 @@ object FrameStats {
     private var janky = 0
     private var worstNs = 0L
     private var firstNs = -1L
+    private var firstParts = ""
+    private var seenFirst = false
+    private var worstParts = ""
+    private var worstAtMs = 0L
+    private var worstIndex = 0
     private var since = 0L
+    private var sinceUptime = 0L
     private var intervalNs = 16_666_667L
 
     /** False while Settings or another screen covers the home screen: those frames are not counted. */
     @Volatile var counting = false
 
     private val thread by lazy { HandlerThread("frame-stats").apply { start() } }
-    private val listener = Window.OnFrameMetricsAvailableListener { _, m, _ -> if (counting) add(m) }
+    private val listener = Window.OnFrameMetricsAvailableListener { _, m, _ -> add(m) }
 
     /** Starts counting for [activity] from zero (MainActivity ON_START). */
     fun start(activity: Activity) {
         val hz = runCatching { activity.windowManager.defaultDisplay.refreshRate }.getOrDefault(60f).takeIf { it > 1f } ?: 60f
         synchronized(this) {
             hist.fill(0); frames = 0; janky = 0; worstNs = 0L; firstNs = -1L
+            firstParts = ""; seenFirst = false; worstParts = ""; worstAtMs = 0L; worstIndex = 0
             since = System.currentTimeMillis()
+            sinceUptime = android.os.SystemClock.uptimeMillis()
             intervalNs = (1_000_000_000L / hz).toLong()
         }
         runCatching { activity.window.addOnFrameMetricsAvailableListener(listener, Handler(thread.looper)) }
@@ -43,16 +51,38 @@ object FrameStats {
         runCatching { activity.window.removeOnFrameMetricsAvailableListener(listener) }
     }
 
+    private fun ms(m: FrameMetrics, id: Int) = m.getMetric(id) / 1_000_000L
+
+    /**
+     * Where a frame's time went: "wait" = the UI thread was busy with something else before the frame could
+     * start (a long task between frames), "UI" = input, animations, composition, layout and recording the
+     * drawing, "upload" = handing pictures to the GPU (a picture shown for the first time), "GPU" = issuing
+     * the drawing commands.
+     */
+    private fun parts(m: FrameMetrics): String {
+        val ui = ms(m, FrameMetrics.INPUT_HANDLING_DURATION) + ms(m, FrameMetrics.ANIMATION_DURATION) +
+            ms(m, FrameMetrics.LAYOUT_MEASURE_DURATION) + ms(m, FrameMetrics.DRAW_DURATION)
+        return "wait ${ms(m, FrameMetrics.UNKNOWN_DELAY_DURATION)} · UI $ui (layout ${ms(m, FrameMetrics.LAYOUT_MEASURE_DURATION)}) · " +
+            "upload ${ms(m, FrameMetrics.SYNC_DURATION)} · GPU ${ms(m, FrameMetrics.COMMAND_ISSUE_DURATION)} ms"
+    }
+
     private fun add(m: FrameMetrics) {
         val ns = m.getMetric(FrameMetrics.TOTAL_DURATION)
         if (ns <= 0) return
         synchronized(this) {
-            // The first frame after the screen is built (on every ON_START) is reported on its own.
-            if (m.getMetric(FrameMetrics.FIRST_DRAW_FRAME) == 1L) { firstNs = ns; return }
+            // The first frame after the screen is built (on every ON_START) is reported on its own, flagged by
+            // Android or not, and also while Settings is in front.
+            if (!seenFirst || m.getMetric(FrameMetrics.FIRST_DRAW_FRAME) == 1L) {
+                seenFirst = true; firstNs = ns; firstParts = parts(m); return
+            }
+            if (!counting) return
             frames++
             // Janky: the frame took longer than one refresh of the display (missed its vsync), like gfxinfo.
             if (ns > intervalNs) janky++
-            if (ns > worstNs) worstNs = ns
+            if (ns > worstNs) {
+                worstNs = ns; worstParts = parts(m); worstIndex = frames
+                worstAtMs = android.os.SystemClock.uptimeMillis() - sinceUptime
+            }
             hist[(ns / 1_000_000L).toInt().coerceIn(0, hist.size - 1)]++
         }
     }
@@ -64,7 +94,10 @@ object FrameStats {
         return hist.size
     }
 
-    /** "Frames (home, since 21:04): 802, janky 204 (25.4%) · 50th 10 ms · … · worst 200 ms · first frame 410 ms". */
+    /**
+     * "Frames (home, since 21:04): 802, janky 204 (25.4%) · 50th 10 ms · … · worst 200 ms (frame 12, 3.4 s after
+     * opening: wait 0 · UI 180 (layout 20) · upload 12 · GPU 5 ms) · first frame 410 ms (…)".
+     */
     fun describe(): String = synchronized(this) {
         if (since == 0L) return "Frames: the home screen has not been shown yet"
         val at = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(since))
@@ -73,8 +106,9 @@ object FrameStats {
         buildString {
             append("Frames (home, since $at): $frames, janky $janky ($pct%)")
             append(" · 50th ${percentile(50)} ms · 90th ${percentile(90)} ms · 95th ${percentile(95)} ms · 99th ${percentile(99)} ms")
-            append(" · worst ${worstNs / 1_000_000L} ms")
-            if (firstNs > 0) append(" · first frame ${firstNs / 1_000_000L} ms")
+            val at = String.format(java.util.Locale.US, "%.1f", worstAtMs / 1000.0)
+            append(" · worst ${worstNs / 1_000_000L} ms (frame $worstIndex, $at s after opening: $worstParts)")
+            if (firstNs > 0) append(" · first frame ${firstNs / 1_000_000L} ms ($firstParts)")
         }
     }
 }

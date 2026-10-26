@@ -60,12 +60,17 @@ class ImageCaches(glassRes: Int) {
     /** Width of the glass copies (Settings → Performance → Glass detail). */
     @Volatile var res: Int = glassRes
 
-    // ---- Glass copies: three 480×270 (or 720×405) bitmaps per backdrop, about 1.5 MB at 480 px.
-    // Limited by memory (about 36 MB), not by count: bigger glass copies keep fewer slides instead of more memory.
-    private val glass = object : LruCache<String, GlassImages>(36 * 1024 * 1024) {
-        override fun sizeOf(key: String, v: GlassImages): Int =
-            v.blurred.width * v.blurred.height * 4 + v.sharp.width * v.sharp.height * 4 + v.heavy.width * v.heavy.height * 4
-    }
+    // ---- Glass copies: three bitmaps per backdrop (one 480×270 or 720×405, two small blurred ones), about 1.2 MB
+    // at 480 px. Kept for the slides the carousel prepares and little more (see [maxGlass]): with a 36 MB budget
+    // the cache kept the glass of ~30 slides you had already passed.
+    private val glass = LruCache<String, GlassImages>(8)
+
+    /**
+     * Most backdrops whose glass copies are kept: the slides prepared ahead ("Prepare ahead", both directions),
+     * the one on screen, the one fading out, the next gallery picture and one spare. Set by HomeScreen.
+     */
+    var maxGlass: Int = 8
+        set(v) { val n = v.coerceIn(4, 16); if (n != field) { field = n; glass.resize(n) } }
     private val pending = HashMap<String, Deferred<GlassImages?>>()
 
     fun peekGlass(url: String, blur: Int): GlassImages? = glass.get("$blur|$res|$url")
@@ -148,8 +153,8 @@ class ImageCaches(glassRes: Int) {
         synchronized(half) { half.clear() }
     }
 
-    /** "glass 9 · baked 2 · half 2", for the Memory line. */
-    fun describe(): String = "glass ${glass.size() / (1024 * 1024)} MB · baked ${synchronized(this) { baked.size }} · half ${synchronized(half) { half.size }}"
+    /** "glass 7 · baked 2 · half 2" (backdrops), for the Memory line. */
+    fun describe(): String = "glass ${glass.size()} · baked ${synchronized(this) { baked.size }} · half ${synchronized(half) { half.size }}"
 
     companion object {
         /**

@@ -26,6 +26,7 @@ import kotlinx.coroutines.async
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -153,6 +154,7 @@ private class DockMetrics(val s: Float, screenW: Float, dockScale: Float) {
     val collapsedH = padTop + cellH + padBottom
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
     val settings = app.settings
@@ -186,6 +188,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
     val images = LocalImageCaches.current
     // In "performance" mode only two baked full-screen backdrops are kept (about 8 MB each at 1080p).
     images.maxBaked = if (settings.effectiveMode() == "performance") 2 else 4
+    images.maxGlass = settings.prefetchDepth + 4
     // What the glass draws, derived from the states above and read only while drawing: a slide change redraws
     // the glass surfaces, it doesn't recompose this screen or the ~20 tiles.
     // Clear glass shows the page picture itself (full resolution, scrims included); the small glass copy
@@ -341,12 +344,18 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
                 }
             }
 
-            // Fully covered by settings or the folder: stop drawing it at all.
+            // Fully covered by settings or the folder: not drawn (a layer at opacity 0 is skipped by the renderer),
+            // but kept composed. Removing it made closing Settings or the folder compose the carousel, the top bar
+            // and every dock tile again in one frame.
             val homeAlphaState = animateFloatAsState(if (screen == Screen.Home && !folderOpen) 1f else 0f, tween(180), label = "homeAlpha")
-            val homeVisible by remember { androidx.compose.runtime.derivedStateOf { homeAlphaState.value > 0.001f } }
-            if (homeVisible || (screen == Screen.Home && !folderOpen)) Box(
+            Box(
                 Modifier.fillMaxSize().graphicsLayer { alpha = homeAlphaState.value }
-                    .focusProperties { canFocus = screen == Screen.Home && pickerFor == null && !folderOpen }
+                    .focusProperties {
+                        canFocus = screen == Screen.Home && pickerFor == null && !folderOpen
+                        // Covered: the arrows in Settings or the folder never move focus onto a tile behind them.
+                        enter = { if (screen == Screen.Home && !folderOpen) FocusRequester.Default else FocusRequester.Cancel }
+                    }
+                    .focusGroup()
             ) {
                 HeroSection(app, s, hidden = expanded || folderOpen, paused = screen != Screen.Home, metrics = metrics, shownUrl = shownUrl,
                     heroFocus = heroFocus, firstTile = firstTile, onBackdrop = { backdrop = it })
