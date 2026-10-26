@@ -63,6 +63,17 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
 
     val addons: Set<String> get() = sp.getStringSet("addons", emptySet()) ?: emptySet()
     private val manual: Set<String> get() = sp.getStringSet("manual_addons", emptySet()) ?: emptySet()
+    /** Add-on links typed on the TV (for Settings → Backup). */
+    val manualAddons: Set<String> get() = manual
+
+    /** From a confirmed backup import: add-on links and chosen catalogs (null = keep as they are). */
+    fun importLinks(addonsIn: Set<String>?, manualIn: Set<String>?, selectedIn: Set<String>?) {
+        if (addonsIn != null) {
+            sp.edit().putStringSet("manual_addons", (manualIn ?: emptySet()).filter { it in addonsIn }.toSet()).apply()
+            saveAddons(addonsIn)
+        }
+        if (selectedIn != null) saveSelected(selectedIn)
+    }
 
     private fun saveAddons(set: Set<String>) {
         sp.edit().putStringSet("addons", set).apply(); addonList.value = set

@@ -144,6 +144,15 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
         toast(ctx, if (granted) "Top Shelf uses apps' own rows where they have pictures" else "Permission refused: Top Shelf keeps using the fallback")
     }
 
+    // Settings → Backup: links are left out unless ticked (not stored); an import waits here until confirmed.
+    var backupLinks by remember { mutableStateOf(false) }
+    var importPlan by remember { mutableStateOf<com.glasslauncher.tv.data.Backup.Plan?>(null) }
+    fun exportNow() = io { "Saved to " + app.backup.export(backupLinks) }
+    fun choose(f: com.glasslauncher.tv.data.Backup.BackupFile) = scope.launch {
+        val r = withContext(Dispatchers.IO) { runCatching { app.backup.plan(f) } }
+        r.onSuccess { importPlan = it }.onFailure { toast(ctx, "Can't use ${f.name}: ${it.message ?: it.javaClass.simpleName}") }
+    }
+
     val refractionWorks = android.os.Build.VERSION.SDK_INT >= 33
     val isTv = remember { ctx.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) }
     val categories = listOf(
@@ -420,6 +429,39 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 if (isTv) listOf(Note("Android TV has no usable \"default home app\" choice. To make Home open Frost-flix, switch on the option above, then turn on the Frost-flix accessibility service (Android Settings → Device Preferences → Accessibility → Frost-flix)."))
                 else listOf(Act("Choose default home app", "", "") { openSystem(ctx, AndroidSettings.ACTION_HOME_SETTINGS) })
             )
+        },
+        Category("Backup") {
+            buildList {
+                val plan = importPlan
+                if (plan != null) {
+                    add(Note("From ${plan.file}: " + if (plan.lines.isEmpty()) "nothing would change." else "${plan.lines.size} changes. Nothing is applied until you choose Apply."))
+                    plan.lines.take(60).forEach { add(Note("·  $it")) }
+                    if (plan.lines.size > 60) add(Note("… and ${plan.lines.size - 60} more"))
+                    if (plan.skipped > 0) add(Note("${plan.skipped} entries in the file were not used (unknown, or not valid)."))
+                    if (plan.lines.isNotEmpty()) add(Act("Apply these changes", "Replaces the settings listed above", "") {
+                        importPlan = null
+                        io { app.backup.apply(plan); app.catalogs.refresh(); "Settings imported from ${plan.file}" }
+                    })
+                    add(Act("Cancel", "Keep the settings as they are", "") { importPlan = null })
+                } else {
+                    add(Note("One file in Download/${com.glasslauncher.tv.data.Backup.FOLDER}/ with your layout, dock order, hidden apps, icons, carousel, catalog, Continue Watching, Watchlist and Top Shelf settings. Never included: the Trakt sign-in and the TMDB token."))
+                    add(Toggle("Include add-on and video links", "They can contain private keys: anyone with the file could use them", { backupLinks }, { backupLinks = it }))
+                    add(Act("Export settings", if (backupLinks) "With add-on and video links" else "Without add-on and video links", "") {
+                        if (!backupLinks) exportNow()
+                        else dialog = MenuDialog("Add-on and video links can contain private keys. Anyone with the file can use them.", listOf(
+                            "Export with links" to { exportNow(); Unit },
+                            "Export without links" to { backupLinks = false; exportNow(); Unit },
+                        ))
+                    })
+                    add(Act("Import settings", "Choose a backup file; you see every change before anything is applied", "") {
+                        scope.launch {
+                            val files = withContext(Dispatchers.IO) { runCatching { app.backup.list() }.getOrDefault(emptyList()) }
+                            if (files.isEmpty()) toast(ctx, "No backup files in Download/${com.glasslauncher.tv.data.Backup.FOLDER}/")
+                            else dialog = MenuDialog("Choose a backup", files.take(30).map { f -> f.name to { choose(f); Unit } })
+                        }
+                    })
+                }
+            }
         },
         Category("About", Kind.About),
     )

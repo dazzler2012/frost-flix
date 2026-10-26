@@ -263,3 +263,14 @@ Goal: fewer slow frames on the Shield (UI thread) and fewer offscreen GPU textur
 - **Top Shelf:** the Watchlist now also feeds the Top Shelf of NuvioTV, Stremio, Kodi and Plex.
 - **Setting:** Continue Watching → "Watchlist row" (on by default). Switching it on fetches the watchlist at once.
 - **Network:** no new host (`api.trakt.tv` as before).
+
+## Settings backup (1.9.3-d11)
+
+- **Where:** Settings → Backup → "Export settings" and "Import settings".
+- **Export:** one JSON file, `Download/Frost-flix/frost-flix-settings-<date>.json` (a time is added when that name exists). Written through MediaStore, which needs no storage permission for the app's own files on Android 10+. On Android 8/9 it goes to the app's folder on shared storage instead (`Android/data/tv.darren.glassio/files/Frost-flix`), so no storage permission is added.
+- **What is in it:** an explicit list of settings: performance and glass, layout and dock look, dock order, hidden apps, Apps folder position, icon pack, custom icons (as PNG data), clock and weather, carousel, artwork picks, Continue Watching, Watchlist row, Top Shelf, "Open titles in", screensaver and the Home button option.
+- **Never exported:** the Trakt sign-in (not read at all) and the TMDB token (not on the list).
+- **Add-on links:** they can contain private keys. They are left out unless you tick "Include add-on and video links" (off every time you open Settings), and exporting with them asks once more. The chosen catalogs and the video links travel only with that option, because catalog names contain their add-on's link.
+- **Import:** only when you choose it. It lists the backup files Frost-flix can see, reads the one you pick, shows every change ("Dock size: 100% → 80%", "Custom icons: 3 (…)", "Add-on links: 2 added, 0 removed") and applies nothing until you choose "Apply these changes". Nothing is ever imported on its own; the seed.json import stays removed.
+- **Checked:** the file must say it is a Frost-flix backup in format 1 and be at most 20 MB. Only known settings are read, each with its type and the range Settings allows. Anything else is ignored and counted ("N entries were not used"). Icons must be valid pictures under 2 MB for a valid package name. Add-on links must start with `https://`. "Top Shelf: use apps' own rows" is only turned on when the permission is already granted. A bad file shows a message instead of crashing.
+- **Not verified on the TV:** after reinstalling Frost-flix, Android may no longer list backup files made by the earlier install (they belong to the old install).

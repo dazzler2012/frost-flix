@@ -205,6 +205,26 @@ class Settings(private val ctx: Context) {
     var aerialUrls: List<String> get() = list("aerialUrls"); set(v) = putList("aerialUrls", v)
     var saverClock: Boolean get() = b("saverClock", true); set(v) = putB("saverClock", v)
 
+    /**
+     * Writes checked values from a backup (Settings → Backup → Import) in one go: Boolean, Int, Float or String
+     * (lists already joined one per line). Keys and ranges are checked by Backup before this is called.
+     */
+    fun importValues(values: Map<String, Any>) {
+        val e = sp.edit()
+        for ((k, v) in values) when (v) {
+            is Boolean -> e.putBoolean(k, v)
+            is Int -> e.putInt(k, v)
+            is Float -> e.putFloat(k, v)
+            is String -> e.putString(k, v)
+        }
+        e.commit()
+        touch()
+        if ("interceptHome" in values) {
+            com.glasslauncher.tv.HomeKeyService.setIntercept(interceptHome)
+            (ctx.applicationContext as? com.glasslauncher.tv.GlassApp)?.checkHomeService()
+        }
+    }
+
     // ---- System
     var interceptHome: Boolean get() = b("interceptHome", false); set(v) { putB("interceptHome", v); com.glasslauncher.tv.HomeKeyService.setIntercept(v); (ctx.applicationContext as? com.glasslauncher.tv.GlassApp)?.checkHomeService() }
 }

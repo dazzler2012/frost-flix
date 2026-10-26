@@ -162,6 +162,7 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
     lateinit var trakt: com.glasslauncher.tv.data.Trakt; private set
     lateinit var cw: com.glasslauncher.tv.data.ContinueWatching; private set
     lateinit var topShelf: com.glasslauncher.tv.data.TopShelf; private set
+    lateinit var backup: com.glasslauncher.tv.data.Backup; private set
 
     override fun onCreate() {
         super.onCreate()
@@ -213,6 +214,7 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         trakt = com.glasslauncher.tv.data.Trakt(this, scope)
         cw = com.glasslauncher.tv.data.ContinueWatching(this, settings, http, trakt, catalogs, scope, foreground).also { it.start() }
         topShelf = com.glasslauncher.tv.data.TopShelf(this, settings, apps, icons, cw, catalogs)
+        backup = com.glasslauncher.tv.data.Backup(this, settings, catalogs, icons)
         topShelf.watchlist = { if (settings.watchlistRow && trakt.signedIn) cw.watchItems.value else emptyList() }
         // Icon files from the drop folder are decoded off the main thread.
         scope.launch(Dispatchers.IO) { runCatching { icons.importDropFolder(apps.apps.value.map { it.pkg }) } }

@@ -21,6 +21,10 @@ class IconStore(private val ctx: Context) {
 
     private fun safe(pkg: String) = pkg.replace(Regex("[^A-Za-z0-9._-]"), "_")
     fun fileFor(pkg: String) = File(dir, safe(pkg) + ".png")
+    /** Every custom icon file, by package (for Settings → Backup). */
+    fun customIcons(): Map<String, File> =
+        dir.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(".png") }.associateBy { it.nameWithoutExtension }
+
     fun has(pkg: String): Boolean { rev.intValue; return fileFor(pkg).exists() }
 
     fun setFromBytes(pkg: String, bytes: ByteArray) {
