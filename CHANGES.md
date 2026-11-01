@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d14`. `versionCode` is 38 (upstream 25).
+- `versionName` changed to `1.9.3-d15`. `versionCode` is 39 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -300,3 +300,19 @@ Goal: fewer slow frames on the Shield (UI thread) and fewer offscreen GPU textur
 - `com.nuvio.app` was added to `<queries>` in the manifest, to the preferred apps list and to the Top Shelf apps.
 - No new permission and no new network host.
 - **Not verified on the TV:** opening a title in the Google Play build.
+
+## Gemini refactor (1.9.3-d15)
+
+Made by another AI from 1.9.3-d13 code, then fixed and merged with d14.
+
+- **Images:** Coil now decodes hardware bitmaps (`allowHardware(true)`). Code that reads pixels copies to a normal bitmap first.
+- **Home screen:** backdrops and dark gradients are drawn on the GPU (`drawWithCache`) instead of baked into full-size bitmaps. Animations are read only in draw/layout lambdas, to cut recompositions.
+- **Image caches:** the "baked" and "half" caches are removed; only the glass copies remain.
+- **MainActivity:** the screen is no longer rebuilt on every start/stop. A lifecycle observer clears the image caches on ON_STOP.
+- **Home key service:** only short Home presses are taken. Long presses and repeats go back to the system. The window-change fallback stays off for 2.5 s after a long press, and when Projectivy Launcher is installed.
+- **Icon picker:** focus scale is read in the draw layer.
+- **Trakt:** OkHttp now does the requests, with an interceptor that adds the token and an authenticator that refreshes it once.
+  - Sign-out happens only when the token endpoint returns 401 or `invalid_grant`. Network errors and timeouts keep the tokens and fail just that request.
+- **Build:** OkHttp `4.12.0` (the version Coil uses) is now a direct dependency.
+- **Fixed:** a `/oauth/*` text in a Trakt.kt comment opened a nested comment and broke the build.
+- **Not verified on the TV:** none of these changes has been run on a device. Only compiled.
