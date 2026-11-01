@@ -90,13 +90,11 @@ val LocalScale = staticCompositionLocalOf { 1f }
  * [strength] 0..80 (the "Glass blur" setting).
  */
 fun blurredBackdrop(src: Bitmap, strength: Int): ImageBitmap {
-    val soft = if (src.config == Bitmap.Config.HARDWARE) src.copy(Bitmap.Config.ARGB_8888, false) else src
     val w = (320 - strength * 3).coerceIn(48, 320)
-    val h = max(8, w * soft.height / max(1, soft.width))
-    val scaled = Bitmap.createScaledBitmap(soft, w, h, true)
-    val small = if (scaled.isMutable && scaled.config == Bitmap.Config.ARGB_8888) scaled
-        else scaled.copy(Bitmap.Config.ARGB_8888, true).also { if (scaled !== soft) scaled.recycle() }
-    if (soft !== src && soft !== small) soft.recycle()
+    val h = max(8, w * src.height / max(1, src.width))
+    val scaled = Bitmap.createScaledBitmap(src, w, h, true)
+    val small = if (scaled.isMutable && scaled.config == Bitmap.Config.ARGB_8888 && scaled !== src) scaled
+        else scaled.copy(Bitmap.Config.ARGB_8888, true).also { if (scaled !== src) scaled.recycle() }
     val r = if (strength <= 0) 0 else (1 + strength / 20).coerceAtMost(4)
     if (r > 0) {
         val px = IntArray(w * h)

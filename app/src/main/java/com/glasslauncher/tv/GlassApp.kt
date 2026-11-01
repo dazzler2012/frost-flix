@@ -27,12 +27,12 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
     /**
      * Image caches sized for TV boxes that also have to play video: 15% of the app's memory class for
      * decoded pictures, 256 MB on disk (small boxes such as the Shield have little free storage).
-     * Hardware bitmaps (Bitmap.Config.HARDWARE) are enabled so decoded backdrops live directly in GPU memory.
-     * Off-screen bitmaps are released on ON_STOP so background video playback keeps headroom.
+     * Every picture is decoded into a software bitmap, never Bitmap.Config.HARDWARE: a hardware bitmap is a
+     * GPU buffer, and its texture can stay in the render thread's cache after the bitmap is gone.
      */
     override fun newImageLoader(context: coil3.PlatformContext): coil3.ImageLoader =
         coil3.ImageLoader.Builder(context)
-            .allowHardware(true)
+            .allowHardware(false)
             // Our own HTTP client (instead of the one Coil makes), so its connections can be closed on ON_STOP.
             .components { add(coil3.network.okhttp.OkHttpNetworkFetcherFactory(callFactory = { imageClient })) }
             .serviceLoaderEnabled(false)

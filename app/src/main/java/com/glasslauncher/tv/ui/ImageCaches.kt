@@ -89,17 +89,12 @@ class ImageCaches(glassRes: Int) {
                         val src = (resImg as? coil3.BitmapImage)?.bitmap ?: resImg?.toBitmap()
                         src?.let {
                             val sh = if (it.isMutable) it.copy(Bitmap.Config.ARGB_8888, false) else it
-                            if (sh.config != Bitmap.Config.HARDWARE) sh.prepareToDraw()
-                            val sw = if (it.config == Bitmap.Config.HARDWARE) it.copy(Bitmap.Config.ARGB_8888, false) else it
-                            try {
-                                GlassImages(
-                                    BitmapTracker.track(blurredBackdrop(sw, blur), "glass"),
-                                    BitmapTracker.track(sh.asImageBitmap(), "glass"),
-                                    BitmapTracker.track(blurredBackdrop(sw, 80), "glass"),
-                                )
-                            } finally {
-                                if (sw !== it) sw.recycle()
-                            }
+                            sh.prepareToDraw()
+                            GlassImages(
+                                BitmapTracker.track(blurredBackdrop(it, blur), "glass"),
+                                BitmapTracker.track(sh.asImageBitmap(), "glass"),
+                                BitmapTracker.track(blurredBackdrop(it, 80), "glass"),
+                            )
                         }?.also { glass.put(key, it) }
                     } catch (e: Exception) {
                         null
