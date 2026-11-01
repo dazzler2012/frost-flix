@@ -90,11 +90,35 @@ class Http(ctx: Context) {
                 val b = r.body ?: throw IOException("empty reply")
                 val body = readCapped(b.byteStream(), b.contentLength())
                 runCatching { f.writeText(body) }
+                trimCacheSoon()
                 return body
             }
         } catch (e: Exception) {
             if (f.exists()) runCatching { return f.readText() }
             throw e
+        }
+    }
+
+    /** When the cache folder was last checked against [MAX_CACHE_BYTES] (elapsed ms). */
+    @Volatile private var lastTrim = 0L
+
+    /** Checks the folder size at most once a minute (and on the first write), not on every write. */
+    private fun trimCacheSoon() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (lastTrim != 0L && now - lastTrim < 60_000L) return
+        lastTrim = now
+        runCatching { trimCache() }
+    }
+
+    /** Keeps the api-cache folder at most [MAX_CACHE_BYTES]: the files written longest ago go first. */
+    @Synchronized private fun trimCache() {
+        val files = dir.listFiles()?.filter { it.isFile } ?: return
+        var total = files.sumOf { it.length() }
+        if (total <= MAX_CACHE_BYTES) return
+        for (f in files.sortedBy { it.lastModified() }) {
+            if (total <= MAX_CACHE_BYTES) break
+            val len = f.length()
+            if (f.delete()) total -= len
         }
     }
 
@@ -113,5 +137,10 @@ class Http(ctx: Context) {
             val b = r.body ?: throw IOException("empty reply")
             return JSONArray(readCapped(b.byteStream(), b.contentLength()))
         }
+    }
+
+    private companion object {
+        /** Size limit of the api-cache folder (catalogs, metadata, weather). */
+        const val MAX_CACHE_BYTES = 32L * 1024 * 1024
     }
 }
