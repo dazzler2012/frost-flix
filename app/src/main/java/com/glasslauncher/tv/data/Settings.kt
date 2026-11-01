@@ -181,7 +181,7 @@ class Settings(private val ctx: Context) {
     var showClock: Boolean get() = b("showClock", true); set(v) = putB("showClock", v)
     var clock24h: Boolean get() = b("clock24h", false); set(v) = putB("clock24h", v)
     var blurRadius: Int get() = i("blurRadius", 36); set(v) = putI("blurRadius", v.coerceIn(0, 80))
-    var glassTint: Int get() = i("glassTint", 6); set(v) = putI("glassTint", v.coerceIn(0, 40))
+    var glassTint: Int get() = i("glassTint", 14); set(v) = putI("glassTint", v.coerceIn(0, 40))
     var showMobileApps: Boolean get() = b("showMobileApps", false); set(v) = putB("showMobileApps", v)
     var dockOrder: List<String> get() = list("dockOrder"); set(v) = putList("dockOrder", v)
     var hiddenApps: List<String> get() = list("hiddenApps"); set(v) = putList("hiddenApps", v)

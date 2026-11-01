@@ -1522,8 +1522,9 @@ private fun TilePlate(style: String, focused: Boolean, s: Float, radius: Dp, fla
         }
         else -> LiquidSurface(
             // Only the selected icon bends light: no extra GPU layer per icon, fast dock and folder.
+            // "Glass brightness" (env.tint / 100f) scales the plate: at the default 14 it is the old 0.10 / 0.04.
             Modifier.fillMaxSize(), radius = radius, refraction = if (focused) (env.refractionDp * 0.75f).dp else 0.dp, bezel = (14 * s).dp,
-            tint = Color.White.copy(alpha = if (focused) 0.10f else 0.04f),
+            tint = Color.White.copy(alpha = ((if (focused) 0.10f else 0.04f) * (env.tint / 100f) / 0.14f).coerceIn(0f, 1f)),
         ) {
             Box(Modifier.matchParentSize(), contentAlignment = Alignment.Center, content = content)
         }

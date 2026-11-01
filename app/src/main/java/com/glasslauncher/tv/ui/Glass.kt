@@ -333,9 +333,10 @@ fun GlassPanel(
             content()
             Box(Modifier.matchParentSize().border(0.6.dp, Color.White.copy(alpha = 0.10f), shape))
         }
+        // "Glass brightness" (env.tint, default 14) sets how dark the glass is: 14 → 0.14, the old fixed value.
         else -> LiquidSurface(
             modifier, radius, if (refract) env.refractionDp.dp else 0.dp, (radius * 1.1f).coerceIn(10.dp, 30.dp),
-            tint = Color.Black.copy(alpha = (0.14f + darken).coerceAtMost(0.9f)),
+            tint = Color.Black.copy(alpha = (env.tint / 100f + darken).coerceIn(0f, 0.9f)),
         ) {
             content()
             Box(Modifier.matchParentSize().border(0.6.dp, Color.White.copy(alpha = 0.10f), shape))
