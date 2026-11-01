@@ -393,7 +393,6 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 }
                 val aerialViews = "com.neilturner.aerialviews"
                 val avInstalled = remember { runCatching { ctx.packageManager.getPackageInfo(aerialViews, 0) }.isSuccess }
-                val avComponent = "$aerialViews/.ui.screensaver.DreamActivity"
                 add(Note("Recommended: Aerial Views, a free system screensaver on Google Play with your own 4K videos, clock and info."))
                 if (!avInstalled) add(Act("Install Aerial Views", "Opens it on Google Play", "Google Play") { openPlay(ctx, aerialViews, null) })
                 else {

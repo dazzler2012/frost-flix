@@ -59,7 +59,6 @@ class Backup(
         Spec.S("dockStyle", "Dock background", styles),
         Spec.S("panelStyle", "Settings background", setOf("liquid", "clear", "amoled")),
         Spec.S("tileStyle", "Icon style", styles),
-        Spec.B("tileBacking", "Icon backing"),
         Spec.B("focusColor", "Colour on focus"),
         Spec.S("focusPlate", "Selected icon plate", setOf("light", "dark")),
         Spec.B("edgeBounce", "Bounce at the edges"),
@@ -253,6 +252,8 @@ class Backup(
         val s = root.optJSONObject("settings") ?: JSONObject()
         val known = (specs + videoLinks).associateBy { it.key }
         for (k in s.keys()) {
+            // Settings removed from Frost-flix: older backups may still have them; ignored without counting.
+            if (k in RETIRED_KEYS) continue
             val spec = known[k]
             val v = spec?.let { read(it, s.opt(k)) }
             if (spec == null || v == null) { skipped++; continue }
@@ -341,5 +342,7 @@ class Backup(
         private const val MAX_FILE_BYTES = 20 * 1024 * 1024
         private const val MAX_ICON_BYTES = 2L * 1024 * 1024
         private val PKG = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$")
+        /** Settings that no longer exist; older backups may still have them (tileBacking: removed in 1.9.3-d17). */
+        private val RETIRED_KEYS = setOf("tileBacking")
     }
 }

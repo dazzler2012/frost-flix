@@ -158,8 +158,6 @@ class Settings(private val ctx: Context) {
     var refraction: Int get() = i("refraction", 14); set(v) { putI("refraction", v.coerceIn(0, 40)); userTuned() }
     var metaScale: Float get() = f("metaScale", 1.0f); set(v) = putF("metaScale", v.coerceIn(0.6f, 2.0f))
     var genresScale: Float get() = f("genresScale", 1.0f); set(v) = putF("genresScale", v.coerceIn(0.6f, 2.0f))
-    /** Opaque dark plate behind every icon, so transparent pack icons don't show the poster through. */
-    var tileBacking: Boolean get() = b("tileBacking", true); set(v) = putB("tileBacking", v)
     /** package name of the selected icon pack, "" = none */
     var iconPack: String get() = s("iconPack", ""); set(v) = putS("iconPack", v)
     /** Weather in the top bar: off | temp | condition | city | all */

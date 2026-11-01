@@ -343,6 +343,3 @@ fun GlassPanel(
         }
     }
 }
-
-/** Kept for the screens that only need the clip. */
-fun Modifier.roundClip(r: Dp) = this.clip(RoundedCornerShape(r))

@@ -59,7 +59,7 @@ class ContinueWatching(
         trakt.onSignedOut = { clear() }
         scope.launch(Dispatchers.IO) {
             // rebuildItems reads add-on metadata over the network: only in front, and again if cut short.
-            while (!foreground.runInFront { rebuildItems() }) Unit
+            while (!foreground.runInFront { rebuildItems() }) { /* cut short: again on the next return */ }
             trakt.ready.await()
             while (true) {
                 // Cancelled when Frost-flix goes to the background.
