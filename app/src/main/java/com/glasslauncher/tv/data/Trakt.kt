@@ -201,7 +201,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
         }
     }
 
-    /** Unauthenticated client for auth.trakt.tv (/oauth/*); has no Authenticator so refresh can never recurse. */
+    /** Unauthenticated client for auth.trakt.tv (/oauth/...); has no Authenticator so refresh can never recurse. */
     private val authClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
