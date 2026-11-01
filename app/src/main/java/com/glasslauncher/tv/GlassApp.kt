@@ -101,7 +101,13 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         backgroundJob?.cancel()
         releaseImages()
         backgroundJob = scope.launch {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { if (!_foreground.value) runCatching { closeImageConnections() } }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                if (!_foreground.value) {
+                    runCatching { closeImageConnections() }
+                    if (::http.isInitialized) runCatching { http.closeConnections() }
+                    if (::trakt.isInitialized) runCatching { trakt.closeIdleConnections() }
+                }
+            }
             // Give the render thread a moment to let go of the last frame's bitmaps.
             kotlinx.coroutines.delay(1500)
             MemoryStats.collect()
@@ -180,6 +186,7 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
                 started++
                 checkHomeService()
                 if (!_foreground.value) {
+                    if (::http.isInitialized) http.inBackground = false
                     _foreground.value = true
                     backgroundJob?.cancel()
                     // Decode the dock icons again off the main thread, ahead of the first frames.
@@ -188,7 +195,11 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
             }
             override fun onActivityStopped(a: Activity) {
                 started = (started - 1).coerceAtLeast(0)
-                if (started == 0) { _foreground.value = false; onBackground() }
+                if (started == 0) {
+                    if (::http.isInitialized) http.inBackground = true
+                    _foreground.value = false
+                    onBackground()
+                }
             }
             override fun onActivityCreated(a: Activity, b: Bundle?) {}
             override fun onActivityResumed(a: Activity) {}
@@ -205,13 +216,13 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
                 ?.addAccessibilityStateChangeListener { checkHomeService() }
         }
         if (settings.perfMode == "auto") settings.applyMode("auto")
-        http = Http(this)
+        http = Http(this).also { it.inBackground = !_foreground.value }
         icons = IconStore(this)
         packs = IconPacks(this)
         apps = AppRepository(this, settings, packs, icons).also { it.start() }
         catalogs = CatalogRepository(this, settings, http).also { it.start(scope, foreground) }
         weather = com.glasslauncher.tv.data.Weather(settings, http, scope, foreground).also { it.start() }
-        trakt = com.glasslauncher.tv.data.Trakt(this, scope)
+        trakt = com.glasslauncher.tv.data.Trakt(this, scope, foreground)
         cw = com.glasslauncher.tv.data.ContinueWatching(this, settings, http, trakt, catalogs, scope, foreground).also { it.start() }
         topShelf = com.glasslauncher.tv.data.TopShelf(this, settings, apps, icons, cw, catalogs)
         backup = com.glasslauncher.tv.data.Backup(this, settings, catalogs, icons)

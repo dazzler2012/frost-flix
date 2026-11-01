@@ -88,13 +88,14 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
         return u
     }
 
-    /** Refreshes every 30 minutes, but only while Frost-flix is in front ([foreground]). */
+    /**
+     * Refreshes every 30 minutes, but only while Frost-flix is in front ([foreground]). A refresh still running
+     * when Frost-flix goes to the background is cancelled, and runs again on the next return to the front.
+     */
     fun start(scope: CoroutineScope, foreground: StateFlow<Boolean>) {
         scope.launch(Dispatchers.IO) {
             while (true) {
-                foreground.first { it }
-                runCatching { refresh() }
-                delay(30 * 60 * 1000L)
+                if (foreground.runInFront { runCatching { refresh() } }) delay(30 * 60 * 1000L)
             }
         }
     }

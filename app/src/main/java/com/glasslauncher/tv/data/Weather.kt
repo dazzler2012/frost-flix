@@ -53,9 +53,8 @@ class Weather(private val settings: Settings, private val http: Http, private va
     fun start() {
         scope.launch(Dispatchers.IO) {
             while (true) {
-                foreground.first { it }
-                if (settings.weatherMode != "off") runCatching { refresh() }
-                delay(15 * 60_000L)
+                // Cancelled when Frost-flix goes to the background; runs again on the next return to the front.
+                if (foreground.runInFront { if (settings.weatherMode != "off") runCatching { refresh() } }) delay(15 * 60_000L)
             }
         }
     }

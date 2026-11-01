@@ -12,6 +12,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Authenticator
@@ -99,7 +101,7 @@ private class TokenVault(ctx: Context) {
  * Interceptor + Authenticator. The client ID comes from BuildConfig (GitHub Actions secret TRAKT_CLIENT_ID);
  * without it Trakt is off.
  */
-class Trakt(ctx: Context, private val scope: CoroutineScope) {
+class Trakt(ctx: Context, private val scope: CoroutineScope, private val foreground: StateFlow<Boolean>) {
     sealed interface State {
         /** App start: the stored sign-in is being read (Keystore decrypt, off the main thread). */
         data object Checking : State
@@ -195,7 +197,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
     }
 
     /** Unauthenticated client for auth.trakt.tv (/oauth/...); has no Authenticator so refresh can never recurse. */
-    private val authClient: OkHttpClient by lazy {
+    private val authClientLazy = lazy {
         OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
@@ -204,6 +206,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
             .addInterceptor(headerInterceptor)
             .build()
     }
+    private val authClient: OkHttpClient by authClientLazy
 
     /** Authenticated client for api.trakt.tv; pairs [authInterceptor] with [tokenAuthenticator]. */
     private val apiClient: OkHttpClient by lazy {
@@ -227,8 +230,18 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
                 state.compareAndSet(State.Checking, s)
             }
             ready.complete(Unit)
-            if (signedIn && username.value.isBlank()) loadUsername()
+            // Network: only once Frost-flix is in front.
+            if (signedIn && username.value.isBlank()) { foreground.first { it }; loadUsername() }
         }
+    }
+
+    /**
+     * Frost-flix went to the background: closes the idle pooled connections of both Trakt clients (they share
+     * one pool). Calls still running are not cancelled, so a token refresh is never cut off halfway (Trakt's
+     * refresh token is single-use). I/O: call off the main thread.
+     */
+    fun closeIdleConnections() {
+        if (authClientLazy.isInitialized()) authClient.connectionPool.evictAll()
     }
 
     private fun responseCount(response: Response): Int {

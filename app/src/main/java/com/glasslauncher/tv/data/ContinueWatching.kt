@@ -58,11 +58,12 @@ class ContinueWatching(
         trakt.onSignedIn = { scope.launch(Dispatchers.IO) { fetch(force = true) } }
         trakt.onSignedOut = { clear() }
         scope.launch(Dispatchers.IO) {
-            rebuildItems()
+            // rebuildItems reads add-on metadata over the network: only in front, and again if cut short.
+            while (!foreground.runInFront { rebuildItems() }) Unit
             trakt.ready.await()
             while (true) {
-                foreground.first { it }
-                runCatching { fetch(force = false) }
+                // Cancelled when Frost-flix goes to the background.
+                foreground.runInFront { runCatching { fetch(force = false) } }
                 delay(60_000)
             }
         }
@@ -222,7 +223,9 @@ class ContinueWatching(
         return null
     }
 
-    private fun rebuildItems() {
+    /** Looks up add-on metadata (network), so it waits until Frost-flix is in front. */
+    private suspend fun rebuildItems() {
+        foreground.first { it }
         val list = entries.value
         val watch = watchEntries.value
         val addons = if (list.isEmpty() && watch.isEmpty()) emptyList() else metaAddons()

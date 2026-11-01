@@ -6,9 +6,10 @@ import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 /** Sent with every request Frost-flix makes. */
 val USER_AGENT = "Frost-flix/${com.glasslauncher.tv.BuildConfig.VERSION_NAME}"
@@ -39,6 +40,36 @@ fun readCapped(input: InputStream, declaredLength: Long = -1L, max: Int = MAX_RE
 class Http(ctx: Context) {
     private val dir = File(ctx.cacheDir, "api-cache").apply { mkdirs() }
 
+    /**
+     * One client for every request made here, so its pooled connections can be closed when Frost-flix goes
+     * to the background ([closeConnections]). Like the HttpURLConnection used before: redirects are followed,
+     * but never between https and http.
+     */
+    private val clientLazy = lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(12, TimeUnit.SECONDS)
+            .followSslRedirects(false)
+            .build()
+    }
+    private val client: OkHttpClient by clientLazy
+
+    /**
+     * True while Frost-flix is in the background (set by GlassApp). Requests then use only the disk cache
+     * (even when old) and never the network, so work cut short by going to the background stops quickly.
+     */
+    @Volatile var inBackground = false
+
+    /**
+     * Frost-flix went to the background: cancels the calls still running and closes the pooled connections.
+     * I/O: call off the main thread.
+     */
+    fun closeConnections() {
+        if (!clientLazy.isInitialized()) return
+        client.dispatcher.cancelAll()
+        client.connectionPool.evictAll()
+    }
+
     private fun key(url: String) =
         MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
 
@@ -48,17 +79,19 @@ class Http(ctx: Context) {
             runCatching { return f.readText() }
         }
         try {
-            val c = URL(url).openConnection() as HttpURLConnection
-            c.connectTimeout = 8000; c.readTimeout = 12000
-            c.setRequestProperty("Accept", "application/json")
-            c.setRequestProperty("User-Agent", USER_AGENT)
-            if (bearer != null) c.setRequestProperty("Authorization", "Bearer $bearer")
-            try {
-                if (c.responseCode !in 200..299) throw IllegalStateException("HTTP ${c.responseCode}")
-                val body = readCapped(c.inputStream, c.contentLengthLong)
+            if (inBackground) throw IOException("Frost-flix is in the background")
+            val req = Request.Builder().url(url)
+                .header("Accept", "application/json")
+                .header("User-Agent", USER_AGENT)
+                .apply { if (bearer != null) header("Authorization", "Bearer $bearer") }
+                .build()
+            client.newCall(req).execute().use { r ->
+                if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}")
+                val b = r.body ?: throw IOException("empty reply")
+                val body = readCapped(b.byteStream(), b.contentLength())
                 runCatching { f.writeText(body) }
                 return body
-            } finally { c.disconnect() }
+            }
         } catch (e: Exception) {
             if (f.exists()) runCatching { return f.readText() }
             throw e
@@ -70,11 +103,15 @@ class Http(ctx: Context) {
 
     /** Never cached and never falls back: used for the local Nuvio add-on server. */
     fun liveArray(url: String, timeoutMs: Int = 2500): JSONArray {
-        val c = URL(url).openConnection() as HttpURLConnection
-        c.connectTimeout = timeoutMs; c.readTimeout = timeoutMs
-        try {
-            if (c.responseCode !in 200..299) throw IllegalStateException("HTTP ${c.responseCode}")
-            return JSONArray(readCapped(c.inputStream, c.contentLengthLong))
-        } finally { c.disconnect() }
+        // Same pool as [client], shorter timeouts.
+        val c = client.newBuilder()
+            .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .build()
+        c.newCall(Request.Builder().url(url).header("User-Agent", USER_AGENT).build()).execute().use { r ->
+            if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}")
+            val b = r.body ?: throw IOException("empty reply")
+            return JSONArray(readCapped(b.byteStream(), b.contentLength()))
+        }
     }
 }
