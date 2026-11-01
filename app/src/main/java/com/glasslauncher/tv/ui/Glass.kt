@@ -12,15 +12,14 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
@@ -55,15 +54,9 @@ data class GlassPics(
     /** The previous backdrop, faded out underneath while the new one fades in (same timing as the page). */
     val prevBmp: ImageBitmap? = null,
     val prevSharp: ImageBitmap? = null,
-    /**
-     * True when [sharp]/[prevSharp] are the full-screen page pictures themselves (scrims already baked in):
-     * the clear glass then shows the picture at full screen resolution instead of a small copy blown up
-     * (which looked pixelated and broken up behind the dock), and lines up with the page exactly.
-     */
-    val sharpIsPage: Boolean = false,
 )
 
-private val noPics: androidx.compose.runtime.State<GlassPics> = androidx.compose.runtime.mutableStateOf(GlassPics())
+private val noPics: androidx.compose.runtime.State<GlassPics> = mutableStateOf(GlassPics())
 
 /** What every glass surface needs: the page backdrop, already blurred once for everybody. */
 data class GlassEnv(
@@ -97,9 +90,13 @@ val LocalScale = staticCompositionLocalOf { 1f }
  * [strength] 0..80 (the "Glass blur" setting).
  */
 fun blurredBackdrop(src: Bitmap, strength: Int): ImageBitmap {
+    val soft = if (src.config == Bitmap.Config.HARDWARE) src.copy(Bitmap.Config.ARGB_8888, false) else src
     val w = (320 - strength * 3).coerceIn(48, 320)
-    val h = max(8, w * src.height / max(1, src.width))
-    val small = Bitmap.createScaledBitmap(src, w, h, true).copy(Bitmap.Config.ARGB_8888, true)
+    val h = max(8, w * soft.height / max(1, soft.width))
+    val scaled = Bitmap.createScaledBitmap(soft, w, h, true)
+    val small = if (scaled.isMutable && scaled.config == Bitmap.Config.ARGB_8888) scaled
+        else scaled.copy(Bitmap.Config.ARGB_8888, true).also { if (scaled !== soft) scaled.recycle() }
+    if (soft !== src && soft !== small) soft.recycle()
     val r = if (strength <= 0) 0 else (1 + strength / 20).coerceAtMost(4)
     if (r > 0) {
         val px = IntArray(w * h)
@@ -174,7 +171,6 @@ half4 main(float2 fc) {
 }
 """
 
-/** One compiled shader per surface; uniforms change, the program is never recompiled. */
 /**
  * The program is compiled once for the whole app. Creating a RenderEffect copies the current uniform
  * values, so one shader object safely serves every surface (all effects are built on the main thread).
@@ -185,8 +181,18 @@ private object SharedShader {
 }
 
 private class Refractor {
+    private var lastW = -1f
+    private var lastH = -1f
+    private var lastR = -1f
+    private var lastB = -1f
+    private var lastS = -1f
+    private var cachedStill: androidx.compose.ui.graphics.RenderEffect? = null
+
     fun effect(w: Float, h: Float, radius: Float, bezel: Float, strength: Float, wobble: Float = 0f): androidx.compose.ui.graphics.RenderEffect? {
         if (Build.VERSION.SDK_INT < 33 || w < 2f || h < 2f || (strength < 0.5f && wobble < 0.01f)) return null
+        if (wobble < 0.01f && w == lastW && h == lastH && radius == lastR && bezel == lastB && strength == lastS) {
+            return cachedStill
+        }
         val s = SharedShader.get() as RuntimeShader
         s.setFloatUniform("size", w, h)
         s.setFloatUniform("radius", min(radius, min(w, h) / 2f))
@@ -194,7 +200,12 @@ private class Refractor {
         s.setFloatUniform("strength", strength)
         s.setFloatUniform("wobble", wobble)
         s.setFloatUniform("phase", (1f - wobble) * 14f)
-        return RenderEffect.createRuntimeShaderEffect(s, "content").asComposeRenderEffect()
+        val built = RenderEffect.createRuntimeShaderEffect(s, "content").asComposeRenderEffect()
+        if (wobble < 0.01f) {
+            lastW = w; lastH = h; lastR = radius; lastB = bezel; lastS = strength
+            cachedStill = built
+        }
+        return built
     }
 }
 
@@ -230,8 +241,8 @@ private var scrims: Scrims? = null
 private fun DrawScope.drawScrims(rootW: Int, rootH: Int, pos: Offset) {
     val sc = scrims?.takeIf { it.w == rootW && it.h == rootH } ?: Scrims(rootW, rootH).also { scrims = it }
     translate(-pos.x, -pos.y) {
-        drawRect(sc.left, topLeft = Offset.Zero, size = Size(rootW * 0.62f, rootH.toFloat()))
-        drawRect(sc.bottom, topLeft = Offset(0f, rootH * 0.58f), size = Size(rootW.toFloat(), rootH * 0.42f))
+        drawRect(sc.left, topLeft = Offset.Zero, size = Size(rootW * 0.62f, rootH.toFloat()), blendMode = BlendMode.SrcOver)
+        drawRect(sc.bottom, topLeft = Offset(0f, rootH * 0.58f), size = Size(rootW.toFloat(), rootH * 0.42f), blendMode = BlendMode.SrcOver)
     }
 }
 
@@ -250,12 +261,10 @@ fun LiquidSurface(
     val env = LocalGlassEnv.current
     val density = LocalDensity.current
     val pos = remember { mutableStateOf(Offset.Zero) }
-    var sz by remember { mutableStateOf(IntSize.Zero) }
     val refractor = remember { Refractor() }
     val rPx = with(density) { radius.toPx() }
     val bPx = with(density) { bezel.toPx() }
     val fPx = with(density) { refraction.toPx() }
-    val still = remember(sz, rPx, bPx, fPx) { refractor.effect(sz.width.toFloat(), sz.height.toFloat(), rPx, bPx, fPx, 0f) }
     val live = env.live
     // A layer only where a RenderEffect can apply (Android 13+, refraction or ripple). Elsewhere (Android 11 on
     // the Shield) the glass draws straight into the screen: no offscreen texture per surface.
@@ -263,39 +272,30 @@ fun LiquidSurface(
     Box(
         modifier
             .clip(RoundedCornerShape(radius))
-            .onGloballyPositioned { pos.value = it.positionInRoot(); if (it.size != sz) sz = it.size },
+            .onGloballyPositioned {
+                val p = it.positionInRoot()
+                if ((p - pos.value).getDistanceSquared() > 0.25f) pos.value = p
+            },
     ) {
         // Everything below is read while drawing: a new slide, its crossfade and the dock's veil redraw the glass,
         // they never recompose it.
         Canvas(Modifier.matchParentSize().then(if (effects) Modifier.graphicsLayer {
             val w = if (wobble > 0f && live != null) live.value * wobble else 0f
-            renderEffect = if (w < 0.01f) still else refractor.effect(size.width, size.height, rPx, bPx, fPx, w)
+            renderEffect = refractor.effect(size.width, size.height, rPx, bPx, fPx, w)
         } else Modifier)) {
             val p = env.pics.value
             val bmp = if (sharp) p.sharp ?: p.bmp else p.bmp
             if (bmp == null) { drawRect(Color(0xFF1A1A22)); return@Canvas }
             val at = pos.value
-            // The full-screen page picture already has the scrims baked in; the small copies don't.
-            val curScrims = !(p.sharpIsPage && bmp === p.sharp)
             val prev = if (sharp) p.prevSharp ?: p.prevBmp else p.prevBmp
             val m = if (prev != null) (env.mix?.value ?: 1f).coerceIn(0f, 1f) else 1f
             if (prev != null && m < 1f) {
-                val prevScrims = !(p.sharpIsPage && prev === p.prevSharp)
-                // Old picture underneath, new one over it at the crossfade's opacity. Both get the same scrims
-                // and veil, so drawing those once on top gives the same pixels as fading a whole layer.
                 drawBackdropRegion(prev, env.rootW, env.rootH, at)
-                if (prevScrims != curScrims) {
-                    if (prevScrims) drawScrims(env.rootW, env.rootH, at)
-                    drawBackdropRegion(bmp, env.rootW, env.rootH, at, alpha = m)
-                    if (curScrims) drawScrims(env.rootW, env.rootH, at) // rare: only one side had scrims
-                } else {
-                    drawBackdropRegion(bmp, env.rootW, env.rootH, at, alpha = m)
-                    if (curScrims) drawScrims(env.rootW, env.rootH, at)
-                }
+                drawBackdropRegion(bmp, env.rootW, env.rootH, at, alpha = m)
             } else {
                 drawBackdropRegion(bmp, env.rootW, env.rootH, at)
-                if (curScrims) drawScrims(env.rootW, env.rootH, at)
             }
+            drawScrims(env.rootW, env.rootH, at)
             val v = env.veil?.value ?: 0f
             if (v > 0.01f) {
                 p.heavy?.let { drawBackdropRegion(it, env.rootW, env.rootH, at, alpha = v) }

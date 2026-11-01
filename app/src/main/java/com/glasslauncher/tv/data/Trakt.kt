@@ -13,17 +13,22 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.Authenticator
+import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.Route
 import org.json.JSONObject
-import java.net.URL
 import java.security.KeyStore
+import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import javax.net.ssl.HttpsURLConnection
 
 /**
  * Not a data class on purpose: no generated toString(), so tokens can't end up in a log by accident.
@@ -90,8 +95,9 @@ private class TokenVault(ctx: Context) {
 }
 
 /**
- * Trakt sign-in (device code flow, client ID only, no client secret) and authenticated GETs.
- * The client ID comes from BuildConfig (GitHub Actions secret TRAKT_CLIENT_ID); without it Trakt is off.
+ * Trakt sign-in (device code flow, client ID only, no client secret) and authenticated GETs via OkHttp
+ * Interceptor + Authenticator. The client ID comes from BuildConfig (GitHub Actions secret TRAKT_CLIENT_ID);
+ * without it Trakt is off.
  */
 class Trakt(ctx: Context, private val scope: CoroutineScope) {
     sealed interface State {
@@ -110,7 +116,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
     private val clientId = BuildConfig.TRAKT_CLIENT_ID.trim()
     val configured: Boolean get() = clientId.isNotBlank()
     private val vault = TokenVault(ctx)
-    private val lock = Mutex()
+    private val authLock = Any()
     private var signInJob: Job? = null
     /** Called after a successful sign-in (Continue Watching loads right away). */
     var onSignedIn: () -> Unit = {}
@@ -126,6 +132,94 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
     /** Completes once the stored sign-in has been read; Continue Watching waits for it before its first fetch. */
     val ready = kotlinx.coroutines.CompletableDeferred<Unit>()
 
+    // ---- OkHttp Interceptor & Authenticator (HTTPS only, never cached, never logged)
+
+    /** Injects standard Trakt API headers onto every outgoing request. */
+    private val headerInterceptor = Interceptor { chain ->
+        val req = chain.request().newBuilder()
+            .header("Accept", "application/json")
+            .header("User-Agent", "Frost-flix/${BuildConfig.VERSION_NAME}")
+            .header("trakt-api-version", "2")
+            .header("trakt-api-key", clientId)
+            .build()
+        chain.proceed(req)
+    }
+
+    /**
+     * Injects stored Bearer credentials onto api.trakt.tv calls and catches final HTTP 401 Unauthorized
+     * responses: if a 401 still emerges (refresh declined or failed), stored tokens are cleared immediately.
+     */
+    private val authInterceptor = Interceptor { chain ->
+        val incoming = chain.request()
+        val authed = if (incoming.header("Authorization") != null) {
+            incoming
+        } else {
+            val token = synchronized(authLock) { vault.load()?.access }
+            if (token.isNullOrBlank()) incoming
+            else incoming.newBuilder().header("Authorization", "Bearer $token").build()
+        }
+        val response = chain.proceed(authed)
+        if (response.code == 401) {
+            expireSession()
+        }
+        response
+    }
+
+    /**
+     * Handles HTTP 401 challenges on api.trakt.tv:
+     * - Aborts immediately and clears tokens if a retry already failed (prevents any retry loop or rate-limiting).
+     * - Attempts at most one synchronized token refresh via [authClient]; on 401 / invalid_grant / refresh failure,
+     *   explicitly clears stored tokens and returns null to abort immediately.
+     */
+    private val tokenAuthenticator = Authenticator { _: Route?, response: Response ->
+        if (responseCount(response) >= 2) {
+            expireSession()
+            return@Authenticator null
+        }
+        synchronized(authLock) {
+            val stored = vault.load()
+            if (stored == null || stored.refresh.isBlank()) {
+                expireSessionLocked()
+                return@synchronized null
+            }
+            val usedBearer = response.request.header("Authorization")?.removePrefix("Bearer ")?.trim()
+            if (!usedBearer.isNullOrEmpty() && stored.access != usedBearer) {
+                return@synchronized response.request.newBuilder()
+                    .header("Authorization", "Bearer ${stored.access}")
+                    .build()
+            }
+            when (val r = refreshLocked(stored)) {
+                is Refresh.Ok -> response.request.newBuilder()
+                    .header("Authorization", "Bearer ${r.tokens.access}")
+                    .build()
+                else -> {
+                    // Explicit 401 auth failure: clear stored tokens and abort the retry loop immediately.
+                    expireSessionLocked()
+                    null
+                }
+            }
+        }
+    }
+
+    /** Unauthenticated client for auth.trakt.tv (/oauth/*); has no Authenticator so refresh can never recurse. */
+    private val authClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .addInterceptor(headerInterceptor)
+            .build()
+    }
+
+    /** Authenticated client for api.trakt.tv; pairs [authInterceptor] with [tokenAuthenticator]. */
+    private val apiClient: OkHttpClient by lazy {
+        authClient.newBuilder()
+            .addInterceptor(authInterceptor)
+            .authenticator(tokenAuthenticator)
+            .build()
+    }
+
     init {
         // The Keystore decrypt and the prefs read happen here, not on the main thread during app start.
         scope.launch(Dispatchers.IO) {
@@ -140,13 +234,39 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
                 state.compareAndSet(State.Checking, s)
             }
             ready.complete(Unit)
-            if (signedIn && username.value.isBlank()) runCatching { accessToken() }.getOrNull()?.let { loadUsername(it) }
+            if (signedIn && username.value.isBlank()) loadUsername()
         }
     }
 
+    private fun responseCount(response: Response): Int {
+        var count = 1
+        var prior = response.priorResponse
+        while (prior != null) {
+            count++
+            prior = prior.priorResponse
+        }
+        return count
+    }
+
+    private fun expireSession() = synchronized(authLock) { expireSessionLocked() }
+
+    /** Must hold [authLock]. Explicitly wipes stored tokens and marks the session expired. */
+    private fun expireSessionLocked() {
+        vault.clear()
+        vault.needsSignIn = true
+        vault.username = ""
+        username.value = ""
+        val current = state.value
+        if (current !is State.Starting && current !is State.Waiting) {
+            state.value = State.Failed(SIGN_IN_AGAIN)
+        }
+        // Not inline: the caller may hold Continue Watching's lock, which clearing the list needs.
+        scope.launch { onSignedOut() }
+    }
+
     /** GET /users/settings on api.trakt.tv → user.username. Best effort: on failure the page just says "Signed in to Trakt". */
-    private fun loadUsername(token: String) {
-        val r = runCatching { call("GET", "/users/settings", bearer = token) }.getOrNull() ?: return
+    private fun loadUsername(explicitBearer: String? = null) {
+        val r = runCatching { executeApiGet("/users/settings", explicitBearer) }.getOrNull() ?: return
         if (r.code != 200) return
         val name = runCatching { JSONObject(r.body).optJSONObject("user")?.optString("username").orEmpty() }.getOrDefault("").trim().take(60)
         if (name.isNotBlank()) { vault.username = name; username.value = name }
@@ -166,30 +286,29 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
             }
     }
 
-    // ---- HTTP (api.trakt.tv, and auth.trakt.tv for /oauth/*; HTTPS only, never cached, never logged)
-
     private class Reply(val code: Int, val body: String)
 
-    private fun call(method: String, path: String, body: JSONObject? = null, bearer: String? = null): Reply {
-        // Trakt's openapi.json: every /oauth/* request (device code, device token, token refresh, revoke) goes to auth.trakt.tv.
-        val host = if (path.startsWith("/oauth/")) AUTH else API
-        val c = URL(host + path).openConnection() as HttpsURLConnection
-        c.requestMethod = method
-        c.connectTimeout = 10_000; c.readTimeout = 15_000
-        c.setRequestProperty("Content-Type", "application/json")
-        c.setRequestProperty("Accept", "application/json")
-        c.setRequestProperty("User-Agent", "Frost-flix/${BuildConfig.VERSION_NAME}")
-        c.setRequestProperty("trakt-api-version", "2")
-        c.setRequestProperty("trakt-api-key", clientId)
-        if (bearer != null) c.setRequestProperty("Authorization", "Bearer $bearer")
-        try {
-            if (body != null) { c.doOutput = true; c.outputStream.use { it.write(body.toString().toByteArray()) } }
-            val code = c.responseCode
-            // A success body must be read whole (an oversized one fails the call); an error body is best effort.
-            val text = if (code in 200..299) readCapped(c.inputStream, c.contentLengthLong)
-                else runCatching { c.errorStream?.let { readCapped(it, max = 64 * 1024) } }.getOrNull().orEmpty()
-            return Reply(code, text)
-        } finally { c.disconnect() }
+    private fun executeOAuthPost(path: String, payload: JSONObject): Reply {
+        val req = Request.Builder()
+            .url(AUTH + path)
+            .post(payload.toString().toRequestBody(JSON_MEDIA))
+            .build()
+        authClient.newCall(req).execute().use { res -> return readReply(res) }
+    }
+
+    private fun executeApiGet(path: String, explicitBearer: String? = null): Reply {
+        val builder = Request.Builder().url(API + path).get()
+        if (!explicitBearer.isNullOrBlank()) builder.header("Authorization", "Bearer $explicitBearer")
+        apiClient.newCall(builder.build()).execute().use { res -> return readReply(res) }
+    }
+
+    private fun readReply(res: Response): Reply {
+        val code = res.code
+        val body = res.body
+        val text = if (body == null) ""
+        else if (code in 200..299) readCapped(body.byteStream(), body.contentLength())
+        else runCatching { readCapped(body.byteStream(), max = 64 * 1024) }.getOrNull().orEmpty()
+        return Reply(code, text)
     }
 
     /**
@@ -232,8 +351,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
     }
 
     private suspend fun deviceFlow() {
-        val start = runCatching { call("POST", "/oauth/device/code", JSONObject().put("client_id", clientId)) }
-        // call() blocks and can't be cancelled: if Cancel was pressed meanwhile, stop here without touching the state.
+        val start = runCatching { executeOAuthPost("/oauth/device/code", JSONObject().put("client_id", clientId)) }
         currentCoroutineContext().ensureActive()
         val s = start.getOrNull()
         if (s == null || s.code != 200) {
@@ -252,14 +370,17 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
         state.value = State.Waiting(userCode, url, completeUrl(o, url, userCode) ?: url, deadline)
         while (System.currentTimeMillis() + interval * 1000 < deadline) {
             delay(interval * 1000)
-            val reply = runCatching { call("POST", "/oauth/device/token", JSONObject().put("code", device).put("client_id", clientId)) }.getOrNull()
-            currentCoroutineContext().ensureActive() // Cancel pressed during the request: never save its tokens
+            val reply = runCatching {
+                executeOAuthPost("/oauth/device/token", JSONObject().put("code", device).put("client_id", clientId))
+            }.getOrNull()
+            currentCoroutineContext().ensureActive()
             val r = reply ?: continue // network hiccup: try again at the next interval
             when (r.code) {
                 200 -> {
                     val t = parseTokens(r.body)
-                    // Checked again under the lock, right before saving.
-                    if (t == null || !lock.withLock { currentCoroutineContext().ensureActive(); vault.save(t) }) {
+                    currentCoroutineContext().ensureActive()
+                    val saved = t != null && synchronized(authLock) { vault.save(t) }
+                    if (t == null || !saved) {
                         state.value = State.Failed("Couldn't store the Trakt sign-in"); return
                     }
                     vault.needsSignIn = false
@@ -285,26 +406,24 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
 
     private sealed interface Refresh {
         class Ok(val tokens: TraktTokens) : Refresh
-        /** [keep]: the old token, while it is still valid (it can be used until then). */
         class Failed(val reason: String, val keep: TraktTokens?) : Refresh
-        /** invalid_grant: the sign-in is gone; tokens deleted, the page asks to sign in again. */
         data object Expired : Refresh
     }
 
     /**
-     * Must hold [lock]. Sends client_id, refresh_token, grant_type and redirect_uri (what Trakt's openapi.json
-     * asks for; no client secret). Replaces both stored tokens on success; on invalid_grant asks to sign in again.
+     * Must hold [authLock]. Sends client_id, refresh_token, grant_type and redirect_uri to auth.trakt.tv.
+     * Replaces both stored tokens on success; on 401 or invalid_grant explicitly clears stored tokens.
      */
     private fun refreshLocked(t: TraktTokens): Refresh {
         val valid = t.takeIf { System.currentTimeMillis() < it.expiresAt }
         val r = try {
-            call("POST", "/oauth/token", JSONObject()
+            executeOAuthPost("/oauth/token", JSONObject()
                 .put("client_id", clientId)
                 .put("refresh_token", t.refresh)
                 .put("redirect_uri", BuildConfig.TRAKT_REDIRECT_URI)
                 .put("grant_type", "refresh_token"))
         } catch (e: Exception) {
-            return Refresh.Failed("can't reach auth.trakt.tv (${e.javaClass.simpleName})", valid) // offline
+            return Refresh.Failed("can't reach auth.trakt.tv (${e.javaClass.simpleName})", valid)
         }
         if (r.code == 200) {
             val n = parseTokens(r.body) ?: return Refresh.Failed("HTTP 200 · reply has no tokens", valid)
@@ -312,48 +431,25 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
             return Refresh.Ok(n)
         }
         val error = runCatching { JSONObject(r.body).optString("error") }.getOrDefault("")
-        if (error == "invalid_grant") {
-            vault.clear(); vault.needsSignIn = true
-            vault.username = ""; username.value = ""
-            state.value = State.Failed(SIGN_IN_AGAIN)
-            // Not inline: the caller may hold Continue Watching's lock, which clearing the list needs.
-            scope.launch { onSignedOut() }
+        if (r.code == 401 || error == "invalid_grant") {
+            expireSessionLocked()
             return Refresh.Expired
         }
         return Refresh.Failed(describe(r), valid)
     }
 
-    /**
-     * How long before expiry the access token is refreshed: half its lifetime, at most a day. Tokens stored
-     * before 1.9.3-d6 have no lifetime; they are treated as 24-hour tokens (12 hours early), safe either way.
-     */
-    private fun refreshMargin(t: TraktTokens): Long = minOf(REFRESH_EARLY_MS, (t.lifeMs.takeIf { it > 0 } ?: REFRESH_EARLY_MS) / 2)
-
-    /** A valid access token, refreshed when [refreshMargin] is reached. Throws [TraktError] when there is none. */
-    private suspend fun accessToken(force: Boolean = false, used: String? = null): String = lock.withLock {
-        val t = vault.load() ?: throw TraktError(if (signedIn) "the stored Trakt sign-in can't be read" else "not signed in to Trakt")
-        // Another caller may already have refreshed while we waited for the lock.
-        if (force && used != null && t.access != used) return@withLock t.access
-        if (!force && System.currentTimeMillis() <= t.expiresAt - refreshMargin(t)) return@withLock t.access
-        when (val r = refreshLocked(t)) {
-            is Refresh.Ok -> r.tokens.access
-            is Refresh.Failed -> r.keep?.access ?: throw TraktError("token refresh failed: ${r.reason}")
-            Refresh.Expired -> throw TraktError(SIGN_IN_AGAIN)
-        }
-    }
-
-    /** Authenticated GET on api.trakt.tv; the body, or [TraktError] with a reason. One refresh-and-retry on 401. */
+    /** Authenticated GET on api.trakt.tv; returns the body, or throws [TraktError] with a safe reason. */
     suspend fun fetch(path: String): String = withContext(Dispatchers.IO) {
         if (!configured) throw TraktError("Trakt not configured")
         if (!signedIn) throw TraktError("not signed in to Trakt")
-        fun send(token: String) = try { call("GET", path, bearer = token) } catch (e: ReplyTooLarge) {
+        val r = try {
+            executeApiGet(path)
+        } catch (e: ReplyTooLarge) {
             throw TraktError(e.message ?: "reply too large")
         } catch (e: Exception) {
             throw TraktError("can't reach api.trakt.tv (${e.javaClass.simpleName})")
         }
-        val token = accessToken()
-        var r = send(token)
-        if (r.code == 401) r = send(accessToken(force = true, used = token))
+        if (r.code == 401) throw TraktError(SIGN_IN_AGAIN)
         if (r.code !in 200..299) throw TraktError(describe(r))
         r.body
     }
@@ -366,8 +462,8 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
      * Never shows a token; only the outcome, Trakt's error text and the new expiry.
      */
     suspend fun forceRefresh(): String = withContext(Dispatchers.IO) {
-        val msg = if (!signedIn) "Not signed in to Trakt" else lock.withLock {
-            val t = vault.load() ?: return@withLock "Refresh failed: the stored sign-in can't be read"
+        val msg = if (!signedIn) "Not signed in to Trakt" else synchronized(authLock) {
+            val t = vault.load() ?: return@synchronized "Refresh failed: the stored sign-in can't be read"
             val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
             when (val r = refreshLocked(t)) {
                 is Refresh.Ok -> {
@@ -377,7 +473,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
                 }
                 is Refresh.Failed -> "Refresh failed: ${r.reason}" +
                     (r.keep?.let { " · the current token still works until ${fmt.format(java.util.Date(it.expiresAt))}" } ?: "")
-                Refresh.Expired -> "Refresh failed: invalid_grant · $SIGN_IN_AGAIN"
+                Refresh.Expired -> "Refresh failed: $SIGN_IN_AGAIN"
             }
         }
         refreshCheck.value = msg
@@ -386,13 +482,16 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
 
     suspend fun signOut() = withContext(Dispatchers.IO) {
         cancelSignIn()
-        val t = lock.withLock { vault.load().also { vault.clear(); vault.needsSignIn = false; vault.username = "" } }
+        val t = synchronized(authLock) {
+            vault.load().also { vault.clear(); vault.needsSignIn = false; vault.username = "" }
+        }
+        runCatching { apiClient.dispatcher.cancelAll() }
         username.value = ""
         refreshCheck.value = ""
         state.value = if (configured) State.SignedOut else State.NotConfigured
         onSignedOut()
         // Best effort: also end the session on Trakt's side.
-        if (t != null) runCatching { call("POST", "/oauth/revoke", JSONObject().put("token", t.access).put("client_id", clientId)) }
+        if (t != null) runCatching { executeOAuthPost("/oauth/revoke", JSONObject().put("token", t.access).put("client_id", clientId)) }
     }
 
     companion object {
@@ -400,7 +499,7 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
         private const val AUTH = "https://auth.trakt.tv"
         private const val STEP_CODE = "Step 1 of 2 (get code) failed: "
         private const val STEP_TOKEN = "Step 2 of 2 (get token) failed: "
-        private const val REFRESH_EARLY_MS = 24L * 3600 * 1000
+        private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
         const val SIGN_IN_AGAIN = "Trakt sign-in expired. Sign in again."
     }
 }

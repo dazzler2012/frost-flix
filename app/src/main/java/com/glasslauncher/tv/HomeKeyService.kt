@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.view.KeyEvent
+import android.view.ViewConfiguration
 import android.view.accessibility.AccessibilityEvent
 import java.lang.ref.WeakReference
 
@@ -11,9 +12,10 @@ import java.lang.ref.WeakReference
  * Home button → Frost-flix.
  *
  * Google TV sends Home to its own launcher no matter which app is the default home. This service
- * (switched on by the user under Settings > Accessibility) receives the Home key *before* the system
- * does and consumes it, so the stock launcher never appears and there is no flash.
- * The old window-change reaction is kept only as a fallback for devices that don't deliver key events.
+ * (switched on by the user under Settings > Accessibility) receives short-press Home keys *before* the system
+ * does and consumes them, so the stock launcher never appears and there is no flash.
+ * Long-press / repeated Home events are yielded back to the OS to preserve native NVIDIA Shield behavior
+ * and avoid race conditions with Projectivy Launcher.
  *
  * Cost: with key filtering on, Android hands every key press of the whole TV to this service first and
  * waits for the answer. So the filter is only requested while "Home button opens Frost-flix" is on, and
@@ -22,6 +24,8 @@ import java.lang.ref.WeakReference
 class HomeKeyService : AccessibilityService() {
     private var lastLaunch = 0L
     private var homeDownAt = 0L
+    private var homeYieldedAt = 0L
+    private var homeLongPress = false
 
     private fun showGlass() {
         val now = System.currentTimeMillis()
@@ -42,21 +46,54 @@ class HomeKeyService : AccessibilityService() {
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode != KeyEvent.KEYCODE_HOME || !intercept) return false
-        when (event.action) {
-            KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) homeDownAt = System.currentTimeMillis()
-            KeyEvent.ACTION_UP -> showGlass()
+        val now = System.currentTimeMillis()
+        // Only consume single short-press HOME events (repeatCount == 0); yield all long-presses and repeats
+        // back to the OS so native NVIDIA Shield shortcuts and Projectivy Launcher never race or break.
+        if (event.repeatCount == 0 && !event.isLongPress) {
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    homeDownAt = now
+                    homeLongPress = false
+                    return true
+                }
+                KeyEvent.ACTION_UP -> {
+                    val canceled = (event.flags and KeyEvent.FLAG_CANCELED) != 0
+                    val heldLong = (event.eventTime - event.downTime) >= ViewConfiguration.getLongPressTimeout()
+                    val yielded = homeLongPress || canceled || heldLong
+                    homeLongPress = false
+                    if (yielded) {
+                        homeYieldedAt = now
+                        return false
+                    }
+                    showGlass()
+                    return true
+                }
+            }
+            return false
         }
-        return true
+        homeLongPress = true
+        homeYieldedAt = now
+        if (event.action == KeyEvent.ACTION_UP) homeLongPress = false
+        return false
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || !intercept) return
+        if (homeLongPress) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg != "com.google.android.apps.tv.launcherx" && pkg != "com.google.android.tvlauncher") return
-        // Only reached when the Home key was not filtered above (e.g. Home from the Google TV remote app).
-        if (System.currentTimeMillis() - homeDownAt < 1500) return
+        val now = System.currentTimeMillis()
+        // Do not hijack window transitions during or right after a yielded long-press or handled key event,
+        // or when key filtering is active and Projectivy / system UI is handling a shortcut.
+        if (now - homeYieldedAt < LONG_PRESS_COOLDOWN_MS || now - homeDownAt < 1500L) return
+        val filteringKeys = (serviceInfo?.flags ?: 0) and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS != 0
+        if (filteringKeys && projectivyInstalled()) return
         showGlass()
     }
+
+    private fun projectivyInstalled(): Boolean = runCatching {
+        packageManager.getPackageInfo(PROJECTIVY_PKG, 0) != null
+    }.getOrDefault(false)
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -85,6 +122,8 @@ class HomeKeyService : AccessibilityService() {
     companion object {
         /** Second Home presses closer together than this are ignored (one press can arrive twice). */
         private const val DEBOUNCE_MS = 400L
+        private const val LONG_PRESS_COOLDOWN_MS = 2500L
+        private const val PROJECTIVY_PKG = "com.spocky.projengmenu"
 
         /** Mirror of Settings.interceptHome, read on every key press without touching preferences. */
         @Volatile var intercept = false

@@ -10,7 +10,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
-import coil3.request.allowHardware
 import coil3.toBitmap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -25,7 +24,7 @@ data class GlassImages(val blurred: ImageBitmap, val sharp: ImageBitmap, val hea
 fun sized(url: String, size: String) = url.replace("/t/p/original/", "/t/p/$size/")
 
 /**
- * Counts the bitmaps Frost-flix makes itself (baked backdrops, glass copies, dock icons, QR codes), for the
+ * Counts the bitmaps Frost-flix makes itself (glass copies, dock icons, QR codes), for the
  * hidden Memory line in Settings → About. Weak keys: a tracked bitmap is never kept alive by being tracked,
  * and it drops out of the count once the garbage collector has freed it.
  */
@@ -51,18 +50,14 @@ object BitmapTracker {
 val LocalImageCaches = staticCompositionLocalOf<ImageCaches> { error("No ImageCaches: provided by MainActivity") }
 
 /**
- * Every large bitmap the home screen keeps between frames: glass copies of backdrops, the baked full-screen
- * backdrops and their half-size copies. One instance per started MainActivity: it is created on ON_START and
- * dropped on ON_STOP together with the whole screen, so nothing here outlives the visible home screen.
- * (No static field and no app-scope object holds these bitmaps.)
+ * Glass copies and in-flight preloads for the home screen. Provided by MainActivity and cleared on ON_STOP via
+ * Compose DisposableEffect so no background jobs or cached glass bitmaps outlive the visible session.
  */
 class ImageCaches(glassRes: Int) {
     /** Width of the glass copies (Settings → Performance → Glass detail). */
     @Volatile var res: Int = glassRes
 
-    // ---- Glass copies: three bitmaps per backdrop (one 480×270 or 720×405, two small blurred ones), about 1.2 MB
-    // at 480 px. Kept for the slides the carousel prepares and little more (see [maxGlass]): with a 36 MB budget
-    // the cache kept the glass of ~30 slides you had already passed.
+    // ---- Glass copies: three small bitmaps per backdrop (sharp + two blurred copies), kept only for nearby slides.
     private val glass = LruCache<String, GlassImages>(8)
 
     /**
@@ -89,16 +84,22 @@ class ImageCaches(glassRes: Int) {
                 blurScope.async {
                     try {
                         val req = ImageRequest.Builder(ctx.applicationContext).data(sized(url, "w780"))
-                            .size(r, r * 9 / 16).allowHardware(false).build()
-                        val src = (SingletonImageLoader.get(ctx.applicationContext).execute(req) as? SuccessResult)?.image?.toBitmap()
+                            .size(r, r * 9 / 16).build()
+                        val resImg = (SingletonImageLoader.get(ctx.applicationContext).execute(req) as? SuccessResult)?.image
+                        val src = (resImg as? coil3.BitmapImage)?.bitmap ?: resImg?.toBitmap()
                         src?.let {
                             val sh = if (it.isMutable) it.copy(Bitmap.Config.ARGB_8888, false) else it
-                            sh.prepareToDraw()
-                            GlassImages(
-                                BitmapTracker.track(blurredBackdrop(it, blur), "glass"),
-                                BitmapTracker.track(sh.asImageBitmap(), "glass"),
-                                BitmapTracker.track(blurredBackdrop(it, 80), "glass"),
-                            )
+                            if (sh.config != Bitmap.Config.HARDWARE) sh.prepareToDraw()
+                            val sw = if (it.config == Bitmap.Config.HARDWARE) it.copy(Bitmap.Config.ARGB_8888, false) else it
+                            try {
+                                GlassImages(
+                                    BitmapTracker.track(blurredBackdrop(sw, blur), "glass"),
+                                    BitmapTracker.track(sh.asImageBitmap(), "glass"),
+                                    BitmapTracker.track(blurredBackdrop(sw, 80), "glass"),
+                                )
+                            } finally {
+                                if (sw !== it) sw.recycle()
+                            }
                         }?.also { glass.put(key, it) }
                     } catch (e: Exception) {
                         null
@@ -110,21 +111,6 @@ class ImageCaches(glassRes: Int) {
         }
         return job.await()
     }
-
-    // ---- Baked backdrops: the picture at screen size (max 1920×1080) with the scrims painted in, ~8 MB each.
-    /** Most baked backdrops kept: 4, or 2 in "performance" mode (set by HomeScreen). */
-    @Volatile var maxBaked = 4
-    private val baked = object : LinkedHashMap<String, Pair<Int, ImageBitmap>>(8, 0.75f, true) {
-        override fun removeEldestEntry(e: MutableMap.MutableEntry<String, Pair<Int, ImageBitmap>>?) = size > maxBaked
-    }
-    @Synchronized fun getBaked(url: String, src: ImageBitmap): ImageBitmap? =
-        baked[url]?.takeIf { it.first == src.width * 10000 + src.height }?.second
-    @Synchronized fun putBaked(url: String, src: ImageBitmap, b: ImageBitmap) { baked[url] = (src.width * 10000 + src.height) to b }
-
-    // ---- Half-size copies of baked backdrops, for the clear glass. Weak keys: they go with their baked picture.
-    private val half = java.util.WeakHashMap<ImageBitmap, ImageBitmap>()
-    fun peekHalf(b: ImageBitmap?): ImageBitmap? = b?.let { synchronized(half) { half[it] } }
-    fun putHalf(b: ImageBitmap, h: ImageBitmap) { synchronized(half) { half[b] = h } }
 
     // ---- Preloads started with ImageLoader.enqueue: they belong to the image loader, not to the screen, so they
     // would keep downloading after ON_STOP. [stop] disposes the ones still running.
@@ -146,26 +132,15 @@ class ImageCaches(glassRes: Int) {
         clear()
     }
 
-    /** Drops everything (screen stopped, or the TV is low on memory). Bitmaps on screen are never recycled here. */
+    /** Drops cached glass bitmaps (screen stopped, or the TV is low on memory). */
     fun clear() {
         glass.evictAll()
-        synchronized(this) { baked.clear() }
-        synchronized(half) { half.clear() }
     }
 
-    /** "glass 7 · baked 2 · half 2" (backdrops), for the Memory line. */
-    fun describe(): String = "glass ${glass.size()} · baked ${synchronized(this) { baked.size }} · half ${synchronized(half) { half.size }}"
+    /** Summary of cached glass entries, for diagnostics. */
+    fun describe(): String = "glass ${glass.size()}"
 
     companion object {
-        /**
-         * Baking backdrops and their half-size copies: two threads below normal priority (nice 5, still in the
-         * foreground CPU group), so a bake never takes CPU time the UI thread or the render thread wants, and two
-         * neighbouring slides can still be baked at once. Holds no bitmaps.
-         */
-        val bakeDispatcher: kotlinx.coroutines.CoroutineDispatcher = java.util.concurrent.Executors.newFixedThreadPool(2) { r ->
-            Thread({ android.os.Process.setThreadPriority(5); r.run() }, "backdrop-bake").apply { isDaemon = true }
-        }.asCoroutineDispatcher()
-
         // One low-priority worker: blurring never competes with drawing the screen. Holds no bitmaps.
         private val worker: java.util.concurrent.ExecutorService = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
             Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); r.run() }, "glass-blur").apply { isDaemon = true }
