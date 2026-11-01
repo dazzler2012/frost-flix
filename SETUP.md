@@ -1,5 +1,7 @@
 # Setup: signing key, releases, installing on the Shield
 
+SETUP.md is for building and releasing Frost-flix. For using the app on your TV, see [USER-GUIDE.md](USER-GUIDE.md).
+
 ## 1. Create the signing key (once, on Windows)
 
 You need `keytool`, which comes with any Java JDK (for example Eclipse Temurin 17).

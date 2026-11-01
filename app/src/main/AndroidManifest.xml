@@ -18,6 +18,7 @@
         <intent><action android:name="com.gau.go.launcherex.theme"/></intent>
         <intent><action android:name="org.adw.launcher.icons.ACTION_PICK_ICON"/></intent>
         <package android:name="com.nuvio.tv"/>
+        <package android:name="com.nuvio.app"/>
         <package android:name="space.nuvio.nativelegacy"/>
         <package android:name="com.nuvioreshaped.tv"/>
         <!-- The Android TV provider (preview programs), for Top Shelf. -->
