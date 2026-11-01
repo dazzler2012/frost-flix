@@ -424,10 +424,10 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 Toggle("Home button opens Frost-flix", "Needs the accessibility service below", { st.interceptHome }, { st.interceptHome = it }),
                 Act("Turn on the accessibility service", "Find Frost-flix and switch it on", "") { openSystem(ctx, AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS) },
             ) + (
-                // Android TV / Google TV (Shield included) has no home app picker that works with the remote: keys
-                // stayed on Frost-flix behind it. On a TV the Home button is taken over by the accessibility service.
-                if (isTv) listOf(Note("Android TV has no usable \"default home app\" choice. To make Home open Frost-flix, switch on the option above, then turn on the Frost-flix accessibility service (Android Settings → Device Preferences → Accessibility → Frost-flix)."))
-                else listOf(Act("Choose default home app", "", "") { openSystem(ctx, AndroidSettings.ACTION_HOME_SETTINGS) })
+                // Frost-flix is not a home app (no HOME intent filter since 1.9.3-d17): the Home button is taken over
+                // by the accessibility service, on a TV and elsewhere.
+                listOf(Note(if (isTv) "Android TV has no usable \"default home app\" choice. To make Home open Frost-flix, switch on the option above, then turn on the Frost-flix accessibility service (Android Settings → Device Preferences → Accessibility → Frost-flix)."
+                    else "Frost-flix is not offered as a \"default home app\". To make Home open Frost-flix, switch on the option above, then turn on the Frost-flix accessibility service in Android's accessibility settings."))
             )
         },
         Category("Backup") {

@@ -35,9 +35,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Only one MainActivity may exist. A second one can appear when Frost-flix is started both as the
-        // system Home activity and as a normal app (launcher row, Home button service): Android keeps those
-        // in separate tasks. The older one is closed; the new one is the one in front.
+        // Only one MainActivity may exist (it is one normal task: no HOME intent filter since 1.9.3-d17). If a
+        // second one ever appears, the older one is closed; the new one is the one in front.
         current?.get()?.let { old ->
             if (old !== this && !old.isFinishing && !old.isDestroyed) {
                 android.util.Log.i("FrostHome", "closing the older MainActivity")
