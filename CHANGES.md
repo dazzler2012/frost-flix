@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d16`. `versionCode` is 40 (upstream 25).
+- `versionName` changed to `1.9.3-d17`. `versionCode` is 41 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -328,3 +328,20 @@ d15 measured on the Shield: 242 MB in the background during a stream (d10: about
   - On start the composition is made again: a short reload. The slide is kept. Drawing code is unchanged, so the look and the frame times on screen should be the same as d15.
 - **onTrimMemory:** `TRIM_MEMORY_UI_HIDDEN` and above, while not in front, does the same release (normally already done on stop).
 - **Not verified on the TV:** the memory numbers, the single activity, and the reload time on return. Only compiled. Check with `adb shell dumpsys meminfo tv.darren.glassio` (Activities, EGL mtrack) and `adb shell dumpsys activity activities | grep glassio`.
+
+## Background memory and network, cleanup (1.9.3-d17)
+
+- **Reverted from d16:** the screen's composition is no longer disposed on stop and rebuilt on start, and MainActivity no longer clears the icon artwork on stop. The single-instance guard stays. GlassApp still releases images when Frost-flix goes to the background, as before d16.
+- **Images:** software bitmaps again (`allowHardware(false)`), as before d15. The hardware-to-software copies in `ImageCaches.glass()` and `blurredBackdrop()` are removed.
+- **Background network:**
+  - Trakt's username lookup at start and Continue Watching's metadata lookup (`rebuildItems`) wait until Frost-flix is in front.
+  - Catalog, Continue Watching and weather refreshes are cancelled when Frost-flix goes to the background, and run again on return.
+  - `Http.kt` uses one shared OkHttpClient instead of `HttpURLConnection`. Redirects between https and http are not followed (as before). In the background its calls are cancelled, its pooled connections closed, and new requests use only the disk cache.
+  - Trakt's idle connections are closed in the background. Calls still running are not cancelled, so a token refresh is never cut off halfway. Coil's connections were already closed.
+- **Not a home app any more:** the `HOME` intent filter is removed from MainActivity. It is one normal task and shows in the app list. The Home button service still opens it.
+  - Frost-flix can no longer be chosen as the default home app. After a reboot, or while the accessibility service is off (Android turns it off after every update of a sideloaded app), Home opens the TV's own launcher.
+  - Settings → System no longer offers "Choose default home app" (Frost-flix would not be listed there). SETUP.md updated.
+- **Glass brightness works:** the liquid dock and panels (`GlassPanel`) and the liquid icon plates (`TilePlate`) follow `env.tint / 100f`. The default changes from 6 to 14, so at the default they look as before. A value stored earlier (changed by hand or from a backup) now takes effect.
+- **api-cache:** capped at 32 MB; the files written longest ago are deleted first. Checked after a write, at most once a minute.
+- **Removed dead code:** `Settings.tileBacking` (it had no effect; Backup import ignores the old key), the unused `avComponent` value, `Modifier.roundClip`, unused Media3 imports in `ScreensaverActivity`.
+- **Not verified on the TV:** memory and network in the background, Home button behaviour without the HOME filter, the app-list entry on the Shield, and the glass look. Only compiled.
