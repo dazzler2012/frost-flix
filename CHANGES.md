@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d15`. `versionCode` is 39 (upstream 25).
+- `versionName` changed to `1.9.3-d16`. `versionCode` is 40 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -316,3 +316,15 @@ Made by another AI from 1.9.3-d13 code, then fixed and merged with d14.
 - **Build:** OkHttp `4.12.0` (the version Coil uses) is now a direct dependency.
 - **Fixed:** a `/oauth/*` text in a Trakt.kt comment opened a nested comment and broke the build.
 - **Not verified on the TV:** none of these changes has been run on a device. Only compiled.
+
+## Background memory again (1.9.3-d16)
+
+d15 measured on the Shield: 242 MB in the background during a stream (d10: about 105 MB), with GPU memory still held and `Activities: 2`.
+
+- **One MainActivity:** when a new MainActivity is created while an older one still exists, the older one is closed. Android keeps a Home-type launch and a normal launch (launcher row, Home button service) in separate tasks, so two could exist.
+- **On stop, the screen's composition is disposed** with `ComposeView.disposeComposition()`. The ComposeView and the window stay (no `removeAllViews()`). Compose pauses recomposition while stopped, so in d15 the pictures held by the composition (painters, logos, Compose layers) stayed referenced in the background.
+  - Disposing destroys the Compose layers, which discards their display lists: the GPU's references to backdrops and glass copies.
+  - Coil's memory cache and the dock icons are cleared, then GlassApp collects garbage as before.
+  - On start the composition is made again: a short reload. The slide is kept. Drawing code is unchanged, so the look and the frame times on screen should be the same as d15.
+- **onTrimMemory:** `TRIM_MEMORY_UI_HIDDEN` and above, while not in front, does the same release (normally already done on stop).
+- **Not verified on the TV:** the memory numbers, the single activity, and the reload time on return. Only compiled. Check with `adb shell dumpsys meminfo tv.darren.glassio` (Activities, EGL mtrack) and `adb shell dumpsys activity activities | grep glassio`.

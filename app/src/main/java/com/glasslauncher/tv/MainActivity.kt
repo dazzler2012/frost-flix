@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.ComposeView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -32,9 +33,23 @@ class MainActivity : ComponentActivity() {
     @Volatile private var lastInput = System.currentTimeMillis()
     /** Reference to the active composition's [ImageCaches] for [onTrimMemory]; managed via [DisposableEffect]. */
     private var images: ImageCaches? = null
+    /** The ComposeView made by setContent. Its composition is disposed on stop and made again on start. */
+    private var composeView: ComposeView? = null
+    /** True between [releaseScreen] and the next start: the composition is disposed. */
+    private var released = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Only one MainActivity may exist. A second one can appear when Frost-flix is started both as the
+        // system Home activity and as a normal app (launcher row, Home button service): Android keeps those
+        // in separate tasks. The older one is closed; the new one is the one in front.
+        current?.get()?.let { old ->
+            if (old !== this && !old.isFinishing && !old.isDestroyed) {
+                android.util.Log.i("FrostHome", "closing the older MainActivity")
+                old.finish()
+            }
+        }
+        current = java.lang.ref.WeakReference(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         hideBars()
         val app = application as GlassApp
@@ -93,13 +108,59 @@ class MainActivity : ComponentActivity() {
                 com.glasslauncher.tv.ui.GlassType { HomeScreen(app, screen) { screen = it } }
             }
         }
+        composeView = findViewById<android.view.ViewGroup>(android.R.id.content)?.getChildAt(0) as? ComposeView
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Back in front after [releaseScreen]: build the screen again (a short reload; the slide is kept in
+        // GlassApp.heroIndex). The view and the window stay; only the composition is new.
+        if (released) {
+            released = false
+            composeView?.createComposition()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        releaseScreen()
+    }
+
+    /**
+     * Frost-flix is in the background: let go of every picture so another app (a stream) gets the memory.
+     * - Disposes the composition (the ComposeView stays attached; no removeAllViews). While stopped, Compose
+     *   pauses recomposition, so state set to null would not reach remembered painters, logos or layers until
+     *   the next start. Disposing drops them now, and destroys the Compose layers, which discards their
+     *   RenderNode display lists (the GPU's references to backdrops and glass copies).
+     * - Clears Coil's memory cache and the dock icons ([GlassApp.releaseImages]).
+     * GlassApp then collects garbage, so the hardware bitmaps' GPU buffers are really freed.
+     */
+    private fun releaseScreen() {
+        if (released) return
+        released = true
+        images?.stop()
+        composeView?.disposeComposition()
+        images = null
+        (application as GlassApp).releaseImages()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        composeView = null
+        images = null
+        if (current?.get() === this) current = null
     }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        // The TV is short of memory while we are in front: drop the caches; what is on screen stays referenced.
         @Suppress("DEPRECATION")
-        if (level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW || level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) images?.clear()
+        when {
+            // UI_HIDDEN and above while not in front: release everything (normally already done in onStop).
+            level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN && !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) -> releaseScreen()
+            // The TV is short of memory while we are in front: drop the caches; what is on screen stays referenced.
+            level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN ||
+                level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW || level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> images?.clear()
+        }
     }
 
     private fun hideBars() {
@@ -155,6 +216,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
+        /** The live MainActivity (see onCreate). Weak, so it never keeps a destroyed one alive. */
+        var current: java.lang.ref.WeakReference<MainActivity>? = null
         const val REPEAT_MS = 100L
         const val STALE_MS = 120L
     }
