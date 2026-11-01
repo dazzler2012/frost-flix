@@ -146,8 +146,8 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
     }
 
     /**
-     * Injects stored Bearer credentials onto api.trakt.tv calls and catches final HTTP 401 Unauthorized
-     * responses: if a 401 still emerges (refresh declined or failed), stored tokens are cleared immediately.
+     * Injects stored Bearer credentials onto api.trakt.tv calls. A final 401 is passed back to the caller
+     * as a failed request; it never clears tokens. Only the token endpoint (see [refreshLocked]) signs out.
      */
     private val authInterceptor = Interceptor { chain ->
         val incoming = chain.request()
@@ -158,28 +158,23 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
             if (token.isNullOrBlank()) incoming
             else incoming.newBuilder().header("Authorization", "Bearer $token").build()
         }
-        val response = chain.proceed(authed)
-        if (response.code == 401) {
-            expireSession()
-        }
-        response
+        chain.proceed(authed)
     }
 
     /**
      * Handles HTTP 401 challenges on api.trakt.tv:
-     * - Aborts immediately and clears tokens if a retry already failed (prevents any retry loop or rate-limiting).
-     * - Attempts at most one synchronized token refresh via [authClient]; on 401 / invalid_grant / refresh failure,
-     *   explicitly clears stored tokens and returns null to abort immediately.
+     * - Gives up (returns null) if a retry already failed, so there is no retry loop. Tokens are kept.
+     * - Attempts at most one synchronized token refresh via [authClient]. Only a 401 / invalid_grant from the
+     *   token endpoint signs the user out (done inside [refreshLocked]). Network errors and timeouts keep the
+     *   tokens and fail just this request.
      */
     private val tokenAuthenticator = Authenticator { _: Route?, response: Response ->
         if (responseCount(response) >= 2) {
-            expireSession()
             return@Authenticator null
         }
         synchronized(authLock) {
             val stored = vault.load()
             if (stored == null || stored.refresh.isBlank()) {
-                expireSessionLocked()
                 return@synchronized null
             }
             val usedBearer = response.request.header("Authorization")?.removePrefix("Bearer ")?.trim()
@@ -192,11 +187,9 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
                 is Refresh.Ok -> response.request.newBuilder()
                     .header("Authorization", "Bearer ${r.tokens.access}")
                     .build()
-                else -> {
-                    // Explicit 401 auth failure: clear stored tokens and abort the retry loop immediately.
-                    expireSessionLocked()
-                    null
-                }
+                // Expired: refreshLocked already signed out (token endpoint said 401 / invalid_grant).
+                // Failed: network error, timeout or other server reply; keep the tokens, fail this request.
+                is Refresh.Expired, is Refresh.Failed -> null
             }
         }
     }
@@ -248,7 +241,6 @@ class Trakt(ctx: Context, private val scope: CoroutineScope) {
         return count
     }
 
-    private fun expireSession() = synchronized(authLock) { expireSessionLocked() }
 
     /** Must hold [authLock]. Explicitly wipes stored tokens and marks the session expired. */
     private fun expireSessionLocked() {
