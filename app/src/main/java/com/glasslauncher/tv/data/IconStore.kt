@@ -10,8 +10,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Custom dock icons. An icon can come from a link, from a file saved in the app's icon folder,
- * or from an upload through the phone page. All of them end up as PNG files in filesDir/icons.
+ * Custom dock icons. An icon can come from a link, from an icon pack, from a photo on the TV or from a file
+ * saved in the app's icon folder. All of them end up as PNG files in filesDir/icons.
  */
 class IconStore(private val ctx: Context) {
     private val dir = File(ctx.filesDir, "icons").apply { mkdirs() }
@@ -21,6 +21,10 @@ class IconStore(private val ctx: Context) {
 
     private fun safe(pkg: String) = pkg.replace(Regex("[^A-Za-z0-9._-]"), "_")
     fun fileFor(pkg: String) = File(dir, safe(pkg) + ".png")
+    /** Every custom icon file, by package (for Settings → Backup). */
+    fun customIcons(): Map<String, File> =
+        dir.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(".png") }.associateBy { it.nameWithoutExtension }
+
     fun has(pkg: String): Boolean { rev.intValue; return fileFor(pkg).exists() }
 
     fun setFromBytes(pkg: String, bytes: ByteArray) {
@@ -55,10 +59,10 @@ class IconStore(private val ctx: Context) {
 
     /** Blocking; call from a background thread. */
     fun setFromUrl(pkg: String, url: String) {
-        require(url.startsWith("http://") || url.startsWith("https://")) { "The link must start with http:// or https://" }
+        require(url.startsWith("https://")) { "The link must start with https://" }
         val c = URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 8000; c.readTimeout = 15000
-        c.setRequestProperty("User-Agent", "GlassLauncher/1.0")
+        c.setRequestProperty("User-Agent", USER_AGENT)
         try {
             check(c.responseCode in 200..299) { "HTTP ${c.responseCode}" }
             val buf = ByteArrayOutputStream()

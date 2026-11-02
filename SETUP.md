@@ -1,5 +1,7 @@
 # Setup: signing key, releases, installing on the Shield
 
+SETUP.md is for building and releasing Frost-flix. For using the app on your TV, see [USER-GUIDE.md](USER-GUIDE.md).
+
 ## 1. Create the signing key (once, on Windows)
 
 You need `keytool`, which comes with any Java JDK (for example Eclipse Temurin 17).
@@ -82,10 +84,12 @@ To update later, repeat step 3 after publishing a new tag.
 
 ## 5. First-run settings on the TV
 
-- **Make it the home app:** Settings → System → Choose default home app.
-- **Home button:** Settings → System → turn on "Home button opens Frost-flix", then switch on the Frost-flix accessibility service in the Android TV accessibility settings. Android turns that service off after every update of a sideloaded app, so turn it on again after updating.
+- **Home button:** Settings → System → turn on "Home button opens Frost-flix", then switch on the Frost-flix accessibility service in the Android TV accessibility settings. Android turns that service off after every update of a sideloaded app, so turn it on again after updating. When it is off, the home screen shows "Home button is off." with a "Turn it back on" button that opens the accessibility settings.
 - **Weather:** Settings → Clock & glass → Weather → Off.
 - **Continue Watching:** Settings → Continue Watching → Sign in to Trakt. Open the address shown on your phone and type the code. The list comes from what NuvioTV scrobbles to Trakt, so turn on Trakt in NuvioTV too.
+- **Watchlist row:** with Trakt signed in, your Trakt watchlist appears as one row under the apps (go down into the dock). Switch it off under Settings → Continue Watching → Watchlist row.
+- **Top Shelf:** the picture above the dock follows the selected app. Settings → Dock & icons → Top Shelf. "Top Shelf: use apps' own rows" (off by default) asks Android for the "TV listings" permission when you switch it on; "Check apps' own rows" then shows which apps give pictures.
+- **Backup:** Settings → Backup → Export settings writes `Download/Frost-flix/frost-flix-settings-<date>.json`. Add-on links are only included when you tick the box. Import settings shows every change and applies nothing until you confirm.
 - **Catalogs:** Settings → Catalogs → Add add-on link. Type the manifest URL with the remote. Only `https://` links work, because cleartext HTTP is blocked (except 127.0.0.1, which Connect to Nuvio uses).
 
 This app has its own package name (`tv.darren.glassio`), so it installs alongside the original Glassio and never replaces it.

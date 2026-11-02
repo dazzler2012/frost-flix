@@ -288,7 +288,7 @@ private fun PickButton(text: String, s: Float, onClick: () -> Unit) {
 @Composable
 private fun PickTile(s: Float, label: String?, onClick: () -> Unit, content: @Composable () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) 1.1f else 1f, spring(0.72f, 520f), label = "pick")
+    val scaleState = animateFloatAsState(if (focused) 1.1f else 1f, spring(0.72f, 520f), label = "pick")
     val shape = RoundedCornerShape((10 * s).dp)
     Column(
         Modifier.onFocusChanged { focused = it.isFocused }.tvPress(onClick = onClick),
@@ -296,7 +296,7 @@ private fun PickTile(s: Float, label: String?, onClick: () -> Unit, content: @Co
     ) {
         Box(
             Modifier.fillMaxWidth().aspectRatio(1.6f)
-                .graphicsLayer { scaleX = scale; scaleY = scale; shadowElevation = if (focused) 14f * s else 0f; this.shape = shape; clip = true }
+                .graphicsLayer { val sc = scaleState.value; scaleX = sc; scaleY = sc; shadowElevation = if (focused) 14f * s else 0f; this.shape = shape; clip = true }
                 .background(Brush.verticalGradient(listOf(Color(0xFF2B2B35), Color(0xFF17171D))))
                 .border(if (focused) 2.dp else 0.6.dp, Color.White.copy(alpha = if (focused) 0.9f else 0.14f), shape),
             contentAlignment = Alignment.Center,

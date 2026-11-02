@@ -41,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.focus.focusRequester
@@ -65,14 +66,17 @@ import com.glasslauncher.tv.data.Trakt
 import com.glasslauncher.tv.saver.ScreensaverActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 private sealed interface SRow
 private class Toggle(val title: String, val desc: String, val get: () -> Boolean, val set: (Boolean) -> Unit) : SRow
 private class Adjust(val title: String, val desc: String, val value: () -> String, val step: (Int) -> Unit) : SRow
-private class Act(val title: String, val desc: String, val value: String = "", val onClick: () -> Unit) : SRow
+private class Act(val title: String, val desc: String, val value: String = "", val onLong: (() -> Unit)? = null, val onClick: () -> Unit) : SRow
 private class Note(val text: String) : SRow
 private class AppItem(val entry: AppEntry) : SRow
+/** The Trakt sign-in block: one button that stays the same row (and keeps focus) in every state. */
+private class TraktBox(val state: Trakt.State, val username: String, val signedInInfo: String, val onLong: (() -> Unit)? = null, val onClick: () -> Unit) : SRow
 
 private enum class Kind { Rows, About }
 private class Category(val title: String, val kind: Kind = Kind.Rows, val rows: @Composable () -> List<SRow> = { emptyList() })
@@ -131,9 +135,29 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
         toast(ctx, runCatching { block() }.getOrElse { it.message ?: "Failed" })
     }
 
+    // "Top Shelf: use apps' own rows" asks for READ_TV_LISTINGS when it is switched on; refused = stays off.
+    var appRowsInfo by remember { mutableStateOf("") }
+    val askListings = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        st.topShelfAppRows = granted
+        toast(ctx, if (granted) "Top Shelf uses apps' own rows where they have pictures" else "Permission refused: Top Shelf keeps using the fallback")
+    }
+
+    // Settings → Backup: links are left out unless ticked (not stored); an import waits here until confirmed.
+    var backupLinks by remember { mutableStateOf(false) }
+    var importPlan by remember { mutableStateOf<com.glasslauncher.tv.data.Backup.Plan?>(null) }
+    fun exportNow() = io { "Saved to " + app.backup.export(backupLinks) }
+    fun choose(f: com.glasslauncher.tv.data.Backup.BackupFile) = scope.launch {
+        val r = withContext(Dispatchers.IO) { runCatching { app.backup.plan(f) } }
+        r.onSuccess { importPlan = it }.onFailure { toast(ctx, "Can't use ${f.name}: ${it.message ?: it.javaClass.simpleName}") }
+    }
+
+    val refractionWorks = android.os.Build.VERSION.SDK_INT >= 33
+    val isTv = remember { ctx.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) }
     val categories = listOf(
         Category("Performance") {
-            fun custom() { st.perfMode = "custom" }
+            // Changing any value below (or the same value on another page) switches Mode to Custom: see Settings.userTuned().
             listOf(
                 Adjust("Mode", when (st.perfMode) {
                     "auto" -> "Picked for this TV from its memory and graphics chip"
@@ -147,14 +171,15 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 }, { st.applyMode(cycle(listOf("auto", "performance", "balanced", "quality"), st.perfMode.takeIf { m -> m != "custom" } ?: "auto", it)) }),
                 Adjust("Glass detail", "Resolution of the picture the glass bends (higher = crisper glass, more memory)", {
                     when (st.glassRes) { 720 -> "Sharp (720 px)"; else -> "Standard (480 px)" }
-                }, { st.glassRes = cycle(listOf(480, 720), st.glassRes, it); custom() }),
+                }, { st.glassRes = cycle(listOf(480, 720), st.glassRes, it) }),
                 Adjust("Picture quality", "Carousel backdrops", { if (st.imageQuality == "high") "High (1280 px)" else "Maximum (original)" },
-                    { st.imageQuality = cycle(listOf("high", "max"), st.imageQuality, it); custom() }),
-                Adjust("Prepare ahead", "Slides loaded before you get to them", { "${st.prefetchDepth}" }, { st.prefetchDepth += it; custom() }),
-                Adjust("Slide transition", "", { "${st.transitionMs} ms" }, { st.transitionMs += it * 50; custom() }),
-                Adjust("Glass refraction", "0 = flat glass (lightest)", { "${st.refraction}" }, { st.refraction += it * 2; custom() }),
-                Toggle("Backdrop gallery", "Several pictures per title", { st.heroGallery }, { st.heroGallery = it; custom() }),
-            )
+                    { st.imageQuality = cycle(listOf("high", "max"), st.imageQuality, it) }),
+                Adjust("Prepare ahead", "Slides loaded before you get to them", { "${st.prefetchDepth}" }, { st.prefetchDepth += it }),
+                Adjust("Slide transition", "", { "${st.transitionMs} ms" }, { st.transitionMs += it * 50 }),
+                // Refraction needs AGSL (Android 13+); below that the glass is always flat, so the row is hidden.
+                Adjust("Glass refraction", "0 = flat glass (lightest)", { "${st.refraction}" }, { st.refraction += it * 2 }).takeIf { refractionWorks },
+                Toggle("Backdrop gallery", "Several pictures per title", { st.heroGallery }, { st.heroGallery = it }),
+            ).filterNotNull()
         },
         Category("Carousel") {
             listOf(
@@ -204,15 +229,15 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 Adjust("Weather", "Top bar, next to the settings button", {
                     when (st.weatherMode) { "off" -> "Off"; "temp" -> "Temperature"; "condition" -> "Temperature + sky"; "city" -> "Temperature + city"; else -> "Everything" }
                 }, { st.weatherMode = cycle(listOf("all", "condition", "city", "temp", "off"), st.weatherMode, it); app.weather.reload() }),
-                Act("Weather city", st.weatherCity + app.weather.found.value.takeIf { it.isNotBlank() }?.let { "  →  $it" }.orEmpty(), "Change") {
-                    dialog = TextEntry("Weather city", st.weatherCity, "Baghdad") { st.weatherCity = it; app.weather.reload() }
+                Act("Weather city", st.weatherCity.ifBlank { "Not set" } + app.weather.found.value.takeIf { it.isNotBlank() }?.let { "  →  $it" }.orEmpty(), "Change") {
+                    dialog = TextEntry("Weather city", st.weatherCity, "City name") { st.weatherCity = it; app.weather.reload() }
                 },
                 Toggle("Fahrenheit", "", { st.weatherF }, { st.weatherF = it }),
                 Toggle("Auto-hide clock and settings button", "Hidden while you browse; they appear when you go up to the settings button", { st.topAutoHide }, { st.topAutoHide = it }),
                 Adjust("Shown at start for", "Then hidden until you go up to them", { "${st.topHideSec} s" }, { st.topHideSec += it }),
                 Adjust("Corner radius", "Dock and app tiles (0 = square)", { "${st.cornerRadius}" }, { st.cornerRadius += it * 2 }),
                 Adjust("Glass blur", "0 turns blur off", { "${st.blurRadius}" }, { st.blurRadius += it * 4 }),
-                Adjust("Glass refraction", "How much the rim bends what is behind it (0 = flat)", { "${st.refraction}" }, { st.refraction += it * 2 }),
+                Adjust("Glass refraction", "How much the rim bends what is behind it (0 = flat)", { "${st.refraction}" }, { st.refraction += it * 2 }).takeIf { refractionWorks },
                 Adjust("Glass brightness", "", { "${st.glassTint}" }, { st.glassTint += it * 2 }),
                 Toggle("Colour on focus", "Like tvOS: icons stay white, the selected one shows its colours on a light plate", { st.focusColor }, { st.focusColor = it }),
                 Adjust("Selected icon plate", "With Colour on focus", { if (st.focusPlate == "dark") "Dark" else "Light" },
@@ -220,7 +245,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 Toggle("Bounce at the edges", "Pressing past the first or last icon nudges it, like tvOS", { st.edgeBounce }, { st.edgeBounce = it }),
                 Toggle("Lift selected icon", "The selected icon rises a little, glass and all", { st.tileLift }, { st.tileLift = it }),
                 Toggle("Show phone apps too", "Apps without a TV launcher entry", { st.showMobileApps }, { st.showMobileApps = it; app.apps.reload() }),
-            )
+            ).filterNotNull()
         },
         Category("Dock & icons") {
             val imported = st.dockOrder.size // read for recomposition on reorder
@@ -237,6 +262,27 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 add(Adjust("Icon style", "How the plate behind every icon looks", {
                     styleName(st.tileStyle)
                 }, { st.tileStyle = cycle(listOf("liquid", "water", "water_still", "clear", "amoled", "bow"), st.tileStyle, it) }))
+                add(Toggle("Top Shelf", "Like Apple TV: the picture above the dock shows the selected app", { st.topShelf }, { st.topShelf = it }))
+                if (st.topShelf) {
+                    add(Toggle("Top Shelf: use apps' own rows",
+                        if (st.topShelfAppRows && !app.topShelf.permissionGranted()) "Permission missing: using the fallback"
+                        else "The rows apps show on the Android TV home screen (asks for a permission)",
+                        { st.topShelfAppRows && app.topShelf.permissionGranted() }) { on ->
+                        when {
+                            !on -> st.topShelfAppRows = false
+                            app.topShelf.permissionGranted() -> st.topShelfAppRows = true
+                            else -> runCatching { askListings.launch(com.glasslauncher.tv.data.TopShelf.READ_TV_LISTINGS) }
+                                .onFailure { toast(ctx, "This TV can't grant that permission: Top Shelf keeps using the fallback") }
+                        }
+                    })
+                    if (st.topShelfAppRows) {
+                        add(Act("Check apps' own rows", "Which apps give Top Shelf pictures", "") {
+                            scope.launch { appRowsInfo = app.topShelf.describeAppRows() }
+                        })
+                        if (appRowsInfo.isNotBlank()) add(Note(appRowsInfo))
+                    }
+                    add(Note("Otherwise: NuvioTV, Stremio, Kodi and Plex show your Continue Watching and Watchlist; other apps a gradient in their icon's colour with their banner."))
+                }
                 add(Note("Change one icon: on the home screen hold OK on the app → Change icon. Pick from an icon pack, a photo on the TV, or a link to a PNG."))
                 add(Note("Icon packs: install any Android TV / Projectivy icon pack from Google Play, then choose it above. Every app takes the pack's icon; you can still change single apps."))
                 add(Act("Find icon packs on Google Play", "Projectivy / Android TV icon packs", "") { openPlay(ctx, null, "projectivy icon pack") })
@@ -244,8 +290,10 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 add(Note("On the home screen, hold OK on an app for App info, Move, Change icon and Hide."))
                 add(Note("Here: OK picks an app up, ◀ ▶ moves it, OK puts it down. Hold OK (or Menu) for its options."))
                 add(Act("Import icons from the icon folder", "", "") {
-                    val n = app.icons.importDropFolder(app.apps.apps.value.map { it.pkg })
-                    toast(ctx, if (n > 0) "Imported $n icons" else "No new icons. Folder: ${app.icons.dropFolder.absolutePath}")
+                    io {
+                        val n = app.icons.importDropFolder(app.apps.apps.value.map { it.pkg })
+                        if (n > 0) "Imported $n icons" else "No new icons. Folder: ${app.icons.dropFolder.absolutePath}"
+                    }
                 })
                 add(Note("Folder for <package>.png files: ${app.icons.dropFolder.absolutePath}"))
                 app.apps.ordered(includeHidden = true).forEach { add(AppItem(it)) }
@@ -280,8 +328,11 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
         },
         Category("Continue Watching") {
             val trakt by app.trakt.state.collectAsState()
+            val traktUser by app.trakt.username.collectAsState()
             val cwList by app.cw.entries.collectAsState()
             val fetched by app.cw.lastFetch.collectAsState()
+            val cwError by app.cw.lastError.collectAsState()
+            val refreshCheck by app.trakt.refreshCheck.collectAsState()
             buildList {
                 add(Adjust("Show Continue Watching", "Where titles you are watching appear", {
                     when (st.continueMode) { "off" -> "Off"; "mixed" -> "Mixed with catalogs"; else -> "At the start" }
@@ -290,20 +341,33 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                     if (st.cwLead <= 0) "All" else "${st.cwLead}"
                 }, { st.cwLead = cycle(listOf(1, 2, 3, 4, 5, 0), st.cwLead, it) }))
                 add(Toggle("Progress bar", "Shows Continue · S1 · E3 · 42% under the title", { st.cwProgress }, { st.cwProgress = it }))
+                add(Toggle("Watchlist row", "Your Trakt watchlist under the apps (scroll down in the dock)", { st.watchlistRow }, { on ->
+                    st.watchlistRow = on
+                    if (on && app.trakt.signedIn) io { app.cw.fetch(true); app.cw.lastError.value.ifBlank { "Watchlist updated" } }
+                }))
                 add(Note("Trakt"))
-                when (val t = trakt) {
-                    Trakt.State.NotConfigured -> add(Note("Trakt not configured. This build has no Trakt client ID (see SETUP.md)."))
-                    Trakt.State.SignedOut -> add(Act("Sign in to Trakt", "Continue Watching comes from what NuvioTV scrobbles to Trakt", "") { app.trakt.startSignIn() })
-                    is Trakt.State.Failed -> add(Act("Sign in to Trakt", t.message, "") { app.trakt.startSignIn() })
-                    is Trakt.State.Waiting -> {
-                        add(Note("On your phone, open ${t.url} and enter the code below."))
-                        add(Act("Code: ${t.userCode}", "Waiting for Trakt… The code works until " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t.expiresAt)), "Cancel") { app.trakt.cancelSignIn() })
-                    }
-                    Trakt.State.SignedIn -> {
-                        val ago = if (fetched <= 0L) "not loaded yet" else "updated ${((System.currentTimeMillis() - fetched) / 60_000).coerceAtLeast(0)} min ago"
-                        add(Note("Signed in to Trakt · ${cwList.size} titles · $ago. Updates at most every 30 minutes."))
-                        add(Act("Sign out of Trakt", "Removes the sign-in and the list from this TV", "") { io { app.trakt.signOut(); app.cw.clear(); "Signed out of Trakt" } })
-                    }
+                if (trakt == Trakt.State.NotConfigured) add(Note("Trakt not configured. This build has no Trakt client ID (see SETUP.md)."))
+                else {
+                    // Sign-in, the code and "Signed in as …" all live in this one row, so focus never leaves the page.
+                    val ago = if (fetched <= 0L) "not loaded yet" else "updated ${((System.currentTimeMillis() - fetched) / 60_000).coerceAtLeast(0)} min ago"
+                    val watchList by app.cw.watchEntries.collectAsState()
+                    add(TraktBox(trakt, traktUser, "${cwList.size} in progress · ${watchList.size} on the watchlist · $ago · OK updates now (otherwise at most every 30 minutes)",
+                        // Hidden debug action: hold OK on "Signed in as …" to refresh the Trakt token now.
+                        onLong = if (trakt == Trakt.State.SignedIn) ({ io { "Force Trakt refresh now: " + app.trakt.forceRefresh() } }) else null,
+                    ) {
+                        when (trakt) {
+                            Trakt.State.Checking -> Unit
+                            Trakt.State.Starting, is Trakt.State.Waiting -> app.trakt.cancelSignIn()
+                            Trakt.State.SignedIn -> io {
+                                if (st.continueMode == "off" && !st.watchlistRow) "Continue Watching and the Watchlist row are off"
+                                else { app.cw.fetch(true); app.cw.lastError.value.ifBlank { "Updated from Trakt" } }
+                            }
+                            else -> app.trakt.startSignIn()
+                        }
+                    })
+                    if (trakt == Trakt.State.SignedIn && cwError.isNotBlank()) add(Note(cwError))
+                    if (trakt == Trakt.State.SignedIn && refreshCheck.isNotBlank()) add(Note("Force Trakt refresh now · $refreshCheck"))
+                    if (trakt == Trakt.State.SignedIn) add(Act("Sign out of Trakt", "Removes the sign-in and the list from this TV", "") { io { app.trakt.signOut(); "Signed out of Trakt" } })
                 }
             }
         },
@@ -329,7 +393,6 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 }
                 val aerialViews = "com.neilturner.aerialviews"
                 val avInstalled = remember { runCatching { ctx.packageManager.getPackageInfo(aerialViews, 0) }.isSuccess }
-                val avComponent = "$aerialViews/.ui.screensaver.DreamActivity"
                 add(Note("Recommended: Aerial Views, a free system screensaver on Google Play with your own 4K videos, clock and info."))
                 if (!avInstalled) add(Act("Install Aerial Views", "Opens it on Google Play", "Google Play") { openPlay(ctx, aerialViews, null) })
                 else {
@@ -345,7 +408,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 add(Toggle("Back on the home screen starts it", "Like Apple TV: press Back on the home screen", { st.backSaver }, { st.backSaver = it }))
                 add(Act("Add video link", "For Frost-flix as system screensaver: a direct https .mp4 / .mov link", "") {
                     dialog = TextEntry("Video link", "", "https://…/video.mp4") { u ->
-                        if (u.startsWith("http")) st.aerialUrls = (st.aerialUrls + u.trim()).distinct() else toast(ctx, "The link must start with http")
+                        if (u.trim().startsWith("https://")) st.aerialUrls = (st.aerialUrls + u.trim()).distinct() else toast(ctx, "The link must start with https://")
                     }
                 })
                 st.aerialUrls.forEach { u ->
@@ -359,14 +422,54 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
             listOf(
                 Toggle("Home button opens Frost-flix", "Needs the accessibility service below", { st.interceptHome }, { st.interceptHome = it }),
                 Act("Turn on the accessibility service", "Find Frost-flix and switch it on", "") { openSystem(ctx, AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS) },
-                Act("Choose default home app", "", "") { openSystem(ctx, AndroidSettings.ACTION_HOME_SETTINGS) },
+            ) + (
+                // Frost-flix is not a home app (no HOME intent filter since 1.9.3-d17): the Home button is taken over
+                // by the accessibility service, on a TV and elsewhere.
+                listOf(Note(if (isTv) "Android TV has no usable \"default home app\" choice. To make Home open Frost-flix, switch on the option above, then turn on the Frost-flix accessibility service (Android Settings → Device Preferences → Accessibility → Frost-flix)."
+                    else "Frost-flix is not offered as a \"default home app\". To make Home open Frost-flix, switch on the option above, then turn on the Frost-flix accessibility service in Android's accessibility settings."))
             )
+        },
+        Category("Backup") {
+            buildList {
+                val plan = importPlan
+                if (plan != null) {
+                    add(Note("From ${plan.file}: " + if (plan.lines.isEmpty()) "nothing would change." else "${plan.lines.size} changes. Nothing is applied until you choose Apply."))
+                    plan.lines.take(60).forEach { add(Note("·  $it")) }
+                    if (plan.lines.size > 60) add(Note("… and ${plan.lines.size - 60} more"))
+                    if (plan.skipped > 0) add(Note("${plan.skipped} entries in the file were not used (unknown, or not valid)."))
+                    if (plan.lines.isNotEmpty()) add(Act("Apply these changes", "Replaces the settings listed above", "") {
+                        importPlan = null
+                        io { app.backup.apply(plan); app.catalogs.refresh(); "Settings imported from ${plan.file}" }
+                    })
+                    add(Act("Cancel", "Keep the settings as they are", "") { importPlan = null })
+                } else {
+                    add(Note("One file in Download/${com.glasslauncher.tv.data.Backup.FOLDER}/ with your layout, dock order, hidden apps, icons, carousel, catalog, Continue Watching, Watchlist and Top Shelf settings. Never included: the Trakt sign-in and the TMDB token."))
+                    add(Toggle("Include add-on and video links", "They can contain private keys: anyone with the file could use them", { backupLinks }, { backupLinks = it }))
+                    add(Act("Export settings", if (backupLinks) "With add-on and video links" else "Without add-on and video links", "") {
+                        if (!backupLinks) exportNow()
+                        else dialog = MenuDialog("Add-on and video links can contain private keys. Anyone with the file can use them.", listOf(
+                            "Export with links" to { exportNow(); Unit },
+                            "Export without links" to { backupLinks = false; exportNow(); Unit },
+                        ))
+                    })
+                    add(Act("Import settings", "Choose a backup file; you see every change before anything is applied", "") {
+                        scope.launch {
+                            val files = withContext(Dispatchers.IO) { runCatching { app.backup.list() }.getOrDefault(emptyList()) }
+                            if (files.isEmpty()) toast(ctx, "No backup files in Download/${com.glasslauncher.tv.data.Backup.FOLDER}/")
+                            else dialog = MenuDialog("Choose a backup", files.take(30).map { f -> f.name to { choose(f); Unit } })
+                        }
+                    })
+                }
+            }
         },
         Category("About", Kind.About),
     )
 
-    // Catalog choices made here are applied when the screen closes.
-    DisposableEffect(Unit) { onDispose { app.scope.launch(Dispatchers.IO) { runCatching { app.catalogs.refresh() } } } }
+    // Catalog choices made here are applied when the screen closes, but only if they changed what the
+    // carousel was last loaded with (selected catalogs, titles per catalog, total titles, shuffle).
+    DisposableEffect(Unit) {
+        onDispose { if (app.catalogs.needsReload()) app.scope.launch(Dispatchers.IO) { runCatching { app.catalogs.refresh() } } }
+    }
     BackHandler { if (rightFocused) runCatching { catFocus[cat].requestFocus() } else onClose() }
     LaunchedEffect(Unit) { delay150(); runCatching { firstCat.requestFocus() } }
 
@@ -425,8 +528,8 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
     DialogHost(dialog) { dialog = null }
 }
 
-/** The original Glassio project (credited in About). */
-private const val UPSTREAM_REPO = "mohammadmrh12/glassio"
+/** This app's source code (GPL-3.0), shown as a QR code in About. */
+private const val SOURCE_REPO = "dazzler2012/frost-flix"
 
 private suspend fun delay150() = kotlinx.coroutines.delay(150)
 
@@ -474,10 +577,11 @@ private fun RowView(row: SRow, s: Float, app: GlassApp, onApp: (AppEntry) -> Uni
                 else Text(row.value(), color = Color.White.copy(alpha = if (f) 1f else 0.75f), fontSize = (13 * s).sp)
             }
         }
-        is Act -> Frame(s, onClick = row.onClick) { f ->
+        is Act -> Frame(s, onClick = row.onClick, onLong = row.onLong) { f ->
             Label(row.title, row.desc, s, Modifier.weight(1f))
             if (row.value.isNotEmpty()) Text(row.value, color = Color.White.copy(alpha = 0.7f), fontSize = (12.5f * s).sp)
         }
+        is TraktBox -> TraktBoxView(row, s)
         is AppItem -> {
             val e = row.entry
             val hidden = e.pkg in app.settings.hiddenApps
@@ -504,6 +608,61 @@ private fun RowView(row: SRow, s: Float, app: GlassApp, onApp: (AppEntry) -> Uni
                 if (flags.isNotEmpty()) Text(flags, color = Color(0xFFB9ABFF), fontSize = (11.5f * s).sp)
                 Text(if (moving) "  ◀ ▶ · OK" else "", color = Color(0xFFB9ABFF), fontSize = (12 * s).sp)
             }
+        }
+    }
+}
+
+/**
+ * Signed out / failed: "Sign in to Trakt". Getting a code / waiting: QR code, address and code, and "Cancel".
+ * Signed in: "Signed in as <username>". The button is the same composable in every state, so it keeps focus.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun TraktBoxView(row: TraktBox, s: Float) {
+    val t = row.state
+    val showCode = t == Trakt.State.Starting || t is Trakt.State.Waiting
+    val bring = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    // The block grows when the code appears; scroll it fully into view.
+    LaunchedEffect(t is Trakt.State.Waiting, showCode) { if (showCode) { kotlinx.coroutines.delay(60); runCatching { bring.bringIntoView() } } }
+    val dim = Color.White.copy(alpha = 0.6f)
+    Row(
+        Modifier.fillMaxWidth().bringIntoViewRequester(bring),
+        horizontalArrangement = Arrangement.spacedBy((18 * s).dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (t is Trakt.State.Waiting) {
+            val qr = rememberQr(t.qrUrl, 600, margin = 4)
+            Box(Modifier.size((210 * s).dp).clip(RoundedCornerShape((10 * s).dp)).background(Color.White)) {
+                qr?.let { Image(it, "QR code: ${t.qrUrl}", Modifier.fillMaxSize(), filterQuality = androidx.compose.ui.graphics.FilterQuality.None) }
+            }
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy((4 * s).dp)) {
+            when (t) {
+                Trakt.State.Starting -> Text("Getting a code from Trakt…", color = Color.White, fontSize = (16 * s).sp, modifier = Modifier.padding(start = (8 * s).dp))
+                is Trakt.State.Waiting -> Column(Modifier.padding(start = (8 * s).dp, bottom = (6 * s).dp)) {
+                    Text("Scan the QR code with your phone, or open", color = dim, fontSize = (12 * s).sp)
+                    Text(t.url.removePrefix("https://"), color = Color.White, fontSize = (22 * s).sp, fontWeight = FontWeight.SemiBold)
+                    Text("and enter this code", color = dim, fontSize = (12 * s).sp, modifier = Modifier.padding(top = (4 * s).dp))
+                    Text(
+                        t.userCode, color = Color.White, fontSize = (38 * s).sp, fontWeight = FontWeight.Bold,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, letterSpacing = (3 * s).sp,
+                    )
+                    Text(
+                        "Waiting for Trakt… The code works until " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t.expiresAt)),
+                        color = dim, fontSize = (11 * s).sp,
+                    )
+                }
+                is Trakt.State.Failed -> Text(t.message, color = Color(0xFFFFB4A9), fontSize = (12 * s).sp, modifier = Modifier.padding(horizontal = (8 * s).dp))
+                else -> Unit
+            }
+            val (title, desc) = when (t) {
+                Trakt.State.Checking -> "Trakt" to "Checking the sign-in…"
+                Trakt.State.Starting, is Trakt.State.Waiting -> "Cancel" to "Stop signing in"
+                Trakt.State.SignedIn -> (if (row.username.isNotBlank()) "Signed in as ${row.username}" else "Signed in to Trakt") to row.signedInInfo
+                is Trakt.State.Failed -> "Sign in to Trakt" to "Try again"
+                else -> "Sign in to Trakt" to "Continue Watching comes from what NuvioTV scrobbles to Trakt"
+            }
+            Frame(s, onClick = row.onClick, onLong = row.onLong) { Label(title, desc, s, Modifier.weight(1f)) }
         }
     }
 }
@@ -543,23 +702,45 @@ private fun Frame(
 }
 
 
-/** Version, the original project's page as a QR code, credits and the last crash (if any). */
+/** A QR code made off the main thread (a 600 px code is 360 000 pixels); null until it is ready. */
+@Composable
+private fun rememberQr(text: String, sizePx: Int, margin: Int = 2): ImageBitmap? =
+    produceState<ImageBitmap?>(null, text, sizePx, margin) {
+        value = withContext(Dispatchers.Default) { runCatching { BitmapTracker.track(com.glasslauncher.tv.net.Net.qr(text, sizePx, margin).asImageBitmap(), "qr") }.getOrNull() }
+    }.value
+
+/** Version, the source code's page as a QR code, credits and the last crash (if any). */
 @Composable
 private fun AboutPane(app: GlassApp, s: Float, onApp: (com.glasslauncher.tv.data.AppEntry) -> Unit) {
     val ctx = LocalContext.current
     val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?" }
-    val qr = remember { com.glasslauncher.tv.net.Net.qr("https://github.com/$UPSTREAM_REPO", 420).asImageBitmap() }
+    val qr = rememberQr("https://github.com/$SOURCE_REPO", 420)
     val crash = remember { java.io.File(ctx.filesDir, "last-crash.txt").takeIf { it.exists() }?.readText()?.lineSequence()?.take(2)?.joinToString(" · ").orEmpty() }
+    // Hidden: hold OK on the version for the Memory line (refreshed every 3 s while shown).
+    var showMemory by remember { mutableStateOf(false) }
+    val memory by produceState("", showMemory) {
+        while (showMemory) {
+            value = withContext(Dispatchers.IO) { runCatching { com.glasslauncher.tv.MemoryStats.read(app, pss = true) }.getOrDefault("") }
+            kotlinx.coroutines.delay(3000)
+        }
+    }
     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy((18 * s).dp)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(qr, "GitHub", Modifier.size((150 * s).dp).clip(RoundedCornerShape((12 * s).dp)))
+            Box(Modifier.size((150 * s).dp).clip(RoundedCornerShape((12 * s).dp)).background(Color.White)) {
+                qr?.let { Image(it, "GitHub", Modifier.fillMaxSize()) }
+            }
             Spacer(Modifier.height((6 * s).dp))
-            Text("github.com/$UPSTREAM_REPO", color = Color.White.copy(alpha = 0.75f), fontSize = (9.5f * s).sp)
+            Text("github.com/$SOURCE_REPO · Source code", color = Color.White.copy(alpha = 0.75f), fontSize = (9.5f * s).sp)
             Text("Scan with your phone", color = Color.White.copy(alpha = 0.5f), fontSize = (9 * s).sp)
         }
         val rows = buildList<SRow> {
-            add(Note("Frost-flix $version · based on Glassio by mohammadmrh12 (GPL-3.0), no self-updates"))
-            add(Note("Made by Mohammad · Fonts: Inter (SIL OFL) · Weather: Open-Meteo · This product uses the TMDB API but is not endorsed or certified by TMDB."))
+            add(Act("Frost-flix $version", "No self-updates", "", onLong = { showMemory = !showMemory }) {})
+            if (showMemory) {
+                add(Note("Memory now · " + memory.ifBlank { "measuring…" }))
+                add(Note(com.glasslauncher.tv.FrameStats.describe()))
+                add(Note(app.lastBackground.ifBlank { "Memory in the background: not measured yet (it is noted ~5 s after another app comes to the front)" }))
+            }
+            add(Note("Frost-flix by Darren · Based on Glassio by mohammadmrh12 · GPL-3.0 · Fonts: Inter (SIL OFL) · Weather: Open-Meteo · This product uses the TMDB API but is not endorsed or certified by TMDB."))
             if (crash.isNotBlank()) add(Act("Last crash", crash.take(120), "Clear") { java.io.File(ctx.filesDir, "last-crash.txt").delete(); toast(ctx, "Cleared") })
         }
         LazyColumn(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy((4 * s).dp)) {

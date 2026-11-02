@@ -4,6 +4,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import kotlin.math.roundToInt
@@ -44,15 +46,15 @@ data class WeatherNow(val city: String, val tempC: Double, val code: Int, val da
     fun temp(fahrenheit: Boolean) = (if (fahrenheit) tempC * 9 / 5 + 32 else tempC).roundToInt().toString() + "°"
 }
 
-class Weather(private val settings: Settings, private val http: Http, private val scope: CoroutineScope) {
+class Weather(private val settings: Settings, private val http: Http, private val scope: CoroutineScope, private val foreground: StateFlow<Boolean>) {
     val now = MutableStateFlow<WeatherNow?>(null)
     private var place: Triple<String, Double, Double>? = null
 
     fun start() {
         scope.launch(Dispatchers.IO) {
             while (true) {
-                if (settings.weatherMode != "off") runCatching { refresh() }
-                delay(15 * 60_000L)
+                // Cancelled when Frost-flix goes to the background; runs again on the next return to the front.
+                if (foreground.runInFront { if (settings.weatherMode != "off") runCatching { refresh() } }) delay(15 * 60_000L)
             }
         }
     }
@@ -92,7 +94,9 @@ class Weather(private val settings: Settings, private val http: Http, private va
     fun reload() { place = null; scope.launch(Dispatchers.IO) { runCatching { refresh() } } }
 
     private fun refresh() {
-        val city = settings.weatherCity.ifBlank { "Baghdad" }
+        val city = settings.weatherCity
+        // No city chosen yet: nothing to look up, nothing to show.
+        if (city.isBlank()) { place = null; found.value = ""; now.value = null; return }
         val p = place?.takeIf { it.first == city } ?: run {
             val ll = locate(city) ?: run { found.value = "City not found"; return }
             Triple(city, ll.first, ll.second).also { place = it }

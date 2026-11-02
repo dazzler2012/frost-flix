@@ -9,6 +9,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -62,6 +63,17 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
 
     val addons: Set<String> get() = sp.getStringSet("addons", emptySet()) ?: emptySet()
     private val manual: Set<String> get() = sp.getStringSet("manual_addons", emptySet()) ?: emptySet()
+    /** Add-on links typed on the TV (for Settings → Backup). */
+    val manualAddons: Set<String> get() = manual
+
+    /** From a confirmed backup import: add-on links and chosen catalogs (null = keep as they are). */
+    fun importLinks(addonsIn: Set<String>?, manualIn: Set<String>?, selectedIn: Set<String>?) {
+        if (addonsIn != null) {
+            sp.edit().putStringSet("manual_addons", (manualIn ?: emptySet()).filter { it in addonsIn }.toSet()).apply()
+            saveAddons(addonsIn)
+        }
+        if (selectedIn != null) saveSelected(selectedIn)
+    }
 
     private fun saveAddons(set: Set<String>) {
         sp.edit().putStringSet("addons", set).apply(); addonList.value = set
@@ -76,14 +88,23 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
         return u
     }
 
-    fun start(scope: CoroutineScope) {
+    /**
+     * Refreshes every 30 minutes, but only while Frost-flix is in front ([foreground]). A refresh still running
+     * when Frost-flix goes to the background is cancelled, and runs again on the next return to the front.
+     */
+    fun start(scope: CoroutineScope, foreground: StateFlow<Boolean>) {
         scope.launch(Dispatchers.IO) {
             while (true) {
-                runCatching { refresh() }
-                delay(30 * 60 * 1000L)
+                if (foreground.runInFront { runCatching { refresh() } }) delay(30 * 60 * 1000L)
             }
         }
     }
+
+    /** What the carousel was last loaded with; Settings reloads on close only when this changed. */
+    private data class LoadInputs(val selected: Set<String>, val per: Int, val max: Int, val shuffle: Boolean)
+    @Volatile private var loadedWith: LoadInputs? = null
+    private fun inputs() = LoadInputs(selectedKeys.value, settings.perCatalog, settings.maxItems, settings.shuffle)
+    fun needsReload(): Boolean = loadedWith != inputs()
 
     private fun parseCatalogs(url: String, fallbackName: String, manifest: JSONObject): List<CatalogRef> {
         val arr = manifest.optJSONArray("catalogs") ?: JSONArray()
@@ -99,6 +120,7 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
     suspend fun refresh() = loadLock.withLock {
         withContext(Dispatchers.IO) {
             status.value = "Loading catalogs…"
+            loadedWith = inputs()
             val urls = addons.toList()
             val refs = java.util.Collections.synchronizedList(mutableListOf<CatalogRef>())
             val gate = Semaphore(4)
@@ -109,7 +131,7 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
                             runCatching {
                                 val m = http.json(u, 24L * 3600 * 1000)
                                 refs += parseCatalogs(u, java.net.URI(u).host ?: "Add-on", m)
-                            }.onFailure { android.util.Log.w("GlassCatalogs", "manifest failed for ${java.net.URI(u).host}: ${it.javaClass.simpleName} ${it.message}") }
+                            }.onFailure { android.util.Log.w("FrostCatalogs", "manifest failed for ${java.net.URI(u).host}: ${it.javaClass.simpleName}") }
                         }
                     }
                 }.awaitAll()
@@ -261,7 +283,8 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
 
     suspend fun addAddon(raw: String): String = withContext(Dispatchers.IO) {
         val url = normalize(raw)
-        val m = try { http.json(url, 0) } catch (e: Exception) { throw IllegalStateException("Could not read that add-on (${e.message})") }
+        require(url.startsWith("https://")) { "Add-on links must start with https:// (or stremio://)" }
+        val m = try { http.json(url, 0) } catch (e: Exception) { throw IllegalStateException("Could not read that add-on (${e.javaClass.simpleName})") }
         val refs = parseCatalogs(url, java.net.URI(url).host ?: "Add-on", m)
         sp.edit().putStringSet("manual_addons", manual + url).apply()
         saveAddons(addons + url)

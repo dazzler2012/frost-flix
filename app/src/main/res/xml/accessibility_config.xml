@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Key filtering is requested at runtime (HomeKeyService.applyFilter), only while
+     "Home button opens Frost-flix" is on: otherwise every key press of the TV would pass through us. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagRequestFilterKeyEvents"
+    android:accessibilityFlags="flagDefault"
     android:canRequestFilterKeyEvents="true"
     android:canRetrieveWindowContent="false"
     android:description="@string/accessibility_description"

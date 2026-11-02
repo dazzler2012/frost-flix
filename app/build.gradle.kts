@@ -11,8 +11,8 @@ android {
         applicationId = "tv.darren.glassio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 28
-        versionName = "1.9.3-d4"
+        versionCode = 41
+        versionName = "1.9.3-d17"
         // Trakt client ID: from the environment (GitHub Actions secret TRAKT_CLIENT_ID), never from the repo.
         // Empty in a local build without it; the app then shows "Trakt not configured".
         // Only leading/trailing whitespace and newlines are removed; every other character is kept (Trakt IDs can contain - and _).
@@ -67,6 +67,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("io.coil-kt.coil3:coil-compose:3.3.0")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.media3:media3-exoplayer:1.8.0")
     implementation("androidx.media3:media3-ui:1.8.0")
     implementation("com.google.zxing:core:3.5.3")
