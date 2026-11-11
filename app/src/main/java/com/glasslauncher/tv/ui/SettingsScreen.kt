@@ -421,6 +421,12 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
         Category("System") {
             listOf(
                 Toggle("Home button opens Frost-flix", "Needs the accessibility service below", { st.interceptHome }, { st.interceptHome = it }),
+                Adjust("Home button mode", when (st.homeMode) {
+                    "watch" -> "Opens Frost-flix when the TV's own launcher appears, so double-press Home (recent apps) keeps working"
+                    else -> "Catches the Home key directly so the TV's own launcher never flashes"
+                }, {
+                    if (st.homeMode == "watch") "Watch launcher" else "Catch Home key"
+                }, { st.homeMode = cycle(listOf("key", "watch"), st.homeMode, it) }),
                 Act("Turn on the accessibility service", "Find Frost-flix and switch it on", "") { openSystem(ctx, AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS) },
             ) + (
                 // Frost-flix is not a home app (no HOME intent filter since 1.9.3-d17): the Home button is taken over

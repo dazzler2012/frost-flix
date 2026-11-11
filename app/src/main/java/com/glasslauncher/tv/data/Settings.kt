@@ -217,12 +217,19 @@ class Settings(private val ctx: Context) {
         }
         e.commit()
         touch()
-        if ("interceptHome" in values) {
+        if ("interceptHome" in values || "homeMode" in values) {
             com.glasslauncher.tv.HomeKeyService.setIntercept(interceptHome)
+            com.glasslauncher.tv.HomeKeyService.setMode(homeMode)
             (ctx.applicationContext as? com.glasslauncher.tv.GlassApp)?.checkHomeService()
         }
     }
 
     // ---- System
     var interceptHome: Boolean get() = b("interceptHome", false); set(v) { putB("interceptHome", v); com.glasslauncher.tv.HomeKeyService.setIntercept(v); (ctx.applicationContext as? com.glasslauncher.tv.GlassApp)?.checkHomeService() }
+    /** key (catch Home key) | watch (watch for the stock launcher window) */
+    var homeMode: String get() = s("homeMode", "key"); set(v) { putS("homeMode", v); com.glasslauncher.tv.HomeKeyService.setMode(v) }
+
+    init {
+        com.glasslauncher.tv.HomeKeyService.setMode(homeMode)
+    }
 }

@@ -113,6 +113,7 @@ class Backup(
         Spec.B("saverClock", "Screensaver clock"),
         Spec.B("backSaver", "Back starts the screensaver"),
         Spec.B("interceptHome", "Home button opens Frost-flix"),
+        Spec.S("homeMode", "Home button mode", setOf("key", "watch")),
     )
     /** Video links: may hold private keys, exported only with the opt-in (like add-on links). */
     private val videoLinks = Spec.L("aerialUrls", "Video links", maxItems = 100, maxLen = 2000)

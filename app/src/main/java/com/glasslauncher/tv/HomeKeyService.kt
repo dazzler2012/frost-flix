@@ -11,21 +11,21 @@ import java.lang.ref.WeakReference
 /**
  * Home button → Frost-flix.
  *
- * Google TV sends Home to its own launcher no matter which app is the default home. This service
- * (switched on by the user under Settings > Accessibility) receives short-press Home keys *before* the system
- * does and consumes them, so the stock launcher never appears and there is no flash.
- * Long-press / repeated Home events are yielded back to the OS to preserve native NVIDIA Shield behavior
- * and avoid race conditions with Projectivy Launcher.
- *
- * Cost: with key filtering on, Android hands every key press of the whole TV to this service first and
- * waits for the answer. So the filter is only requested while "Home button opens Frost-flix" is on, and
- * [onKeyEvent] is one comparison: every key except HOME is passed straight through, untouched.
+ * Two modes (Settings.homeMode):
+ * - "key" ("Catch Home key", default): asks for key filtering and consumes short-press Home keys before the
+ *   system sees them, so the stock launcher never appears and there is no flash. Long-press / repeated Home
+ *   events are yielded back to the OS to preserve native NVIDIA Shield behavior and avoid race conditions with
+ *   Projectivy Launcher.
+ * - "watch" ("Watch launcher", inspired by GlassOS+ FastHomeService): leaves key filtering off so the system
+ *   handles Home (preserving double-press Home for recent apps on the Shield) and brings Frost-flix to the
+ *   front when the stock launcher window appears.
  */
 class HomeKeyService : AccessibilityService() {
     private var lastLaunch = 0L
     private var homeDownAt = 0L
     private var homeYieldedAt = 0L
     private var homeLongPress = false
+    private var homeDownConsumed = false
 
     private fun showGlass() {
         val now = System.currentTimeMillis()
@@ -45,7 +45,7 @@ class HomeKeyService : AccessibilityService() {
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (event.keyCode != KeyEvent.KEYCODE_HOME || !intercept) return false
+        if (mode != "key" || event.keyCode != KeyEvent.KEYCODE_HOME || !intercept) return false
         val now = System.currentTimeMillis()
         // Only consume single short-press HOME events (repeatCount == 0); yield all long-presses and repeats
         // back to the OS so native NVIDIA Shield shortcuts and Projectivy Launcher never race or break.
@@ -54,15 +54,18 @@ class HomeKeyService : AccessibilityService() {
                 KeyEvent.ACTION_DOWN -> {
                     homeDownAt = now
                     homeLongPress = false
+                    homeDownConsumed = true
                     return true
                 }
                 KeyEvent.ACTION_UP -> {
+                    val consumedDown = homeDownConsumed
+                    homeDownConsumed = false
                     val canceled = (event.flags and KeyEvent.FLAG_CANCELED) != 0
                     val heldLong = (event.eventTime - event.downTime) >= ViewConfiguration.getLongPressTimeout()
-                    val yielded = homeLongPress || canceled || heldLong
+                    val yielded = !consumedDown || homeLongPress || canceled || heldLong
                     homeLongPress = false
                     if (yielded) {
-                        homeYieldedAt = now
+                        if (consumedDown) homeYieldedAt = now
                         return false
                     }
                     showGlass()
@@ -72,6 +75,7 @@ class HomeKeyService : AccessibilityService() {
             return false
         }
         homeLongPress = true
+        homeDownConsumed = false
         homeYieldedAt = now
         if (event.action == KeyEvent.ACTION_UP) homeLongPress = false
         return false
@@ -81,13 +85,19 @@ class HomeKeyService : AccessibilityService() {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || !intercept) return
         if (homeLongPress) return
         val pkg = event.packageName?.toString() ?: return
-        if (pkg != "com.google.android.apps.tv.launcherx" && pkg != "com.google.android.tvlauncher") return
+        val cls = event.className?.toString().orEmpty()
+        // Never react to Frost-flix itself, system UI, Settings or the recents overlay; only the watched stock launchers.
+        if (pkg == packageName || pkg in IGNORED_PKGS || cls.contains("Recents", ignoreCase = true)) return
+        if (pkg !in LAUNCHER_PKGS) return
         val now = System.currentTimeMillis()
-        // Do not hijack window transitions during or right after a yielded long-press or handled key event,
-        // or when key filtering is active and Projectivy / system UI is handling a shortcut.
-        if (now - homeYieldedAt < LONG_PRESS_COOLDOWN_MS || now - homeDownAt < 1500L) return
-        val filteringKeys = (serviceInfo?.flags ?: 0) and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS != 0
-        if (filteringKeys && projectivyInstalled()) return
+        if (now - lastLaunch < DEBOUNCE_MS) return
+        if (mode == "key") {
+            // Do not hijack window transitions during or right after a yielded long-press or handled key event,
+            // or when key filtering is active and Projectivy / system UI is handling a shortcut.
+            if (now - homeYieldedAt < LONG_PRESS_COOLDOWN_MS || now - homeDownAt < 1500L) return
+            val filteringKeys = (serviceInfo?.flags ?: 0) and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS != 0
+            if (filteringKeys && projectivyInstalled()) return
+        }
         showGlass()
     }
 
@@ -97,8 +107,12 @@ class HomeKeyService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        (application as? GlassApp)?.settings?.let {
+            intercept = it.interceptHome
+            mode = it.homeMode
+        }
         instance = WeakReference(this)
-        applyFilter()
+        configureKeyFilter()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -106,12 +120,19 @@ class HomeKeyService : AccessibilityService() {
         return super.onUnbind(intent)
     }
 
-    /** Asks for key events only while interception is on; otherwise the TV's keys never come through here. */
-    private fun applyFilter() {
+    override fun onDestroy() {
+        if (instance?.get() === this) instance = null
+        super.onDestroy()
+    }
+
+    /** Asks for key events only while interception is on in "key" mode; otherwise the TV's keys never come through here. */
+    fun configureKeyFilter() {
         val info = serviceInfo ?: return
-        val want = intercept
-        val has = info.flags and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS != 0
-        if (want == has) return
+        val want = intercept && mode == "key"
+        if (!want) {
+            homeDownConsumed = false
+            homeLongPress = false
+        }
         info.flags = if (want) info.flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
             else info.flags and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS.inv()
         serviceInfo = info
@@ -120,13 +141,17 @@ class HomeKeyService : AccessibilityService() {
     override fun onInterrupt() {}
 
     companion object {
-        /** Second Home presses closer together than this are ignored (one press can arrive twice). */
-        private const val DEBOUNCE_MS = 400L
+        /** Events closer together than this after a launch are ignored. */
+        private const val DEBOUNCE_MS = 250L
         private const val LONG_PRESS_COOLDOWN_MS = 2500L
         private const val PROJECTIVY_PKG = "com.spocky.projengmenu"
+        private val LAUNCHER_PKGS = setOf("com.google.android.apps.tv.launcherx", "com.google.android.tvlauncher")
+        private val IGNORED_PKGS = setOf("com.android.systemui", "com.android.tv.settings", "com.android.settings")
 
-        /** Mirror of Settings.interceptHome, read on every key press without touching preferences. */
+        /** Mirror of Settings.interceptHome and Settings.homeMode, read without touching preferences. */
         @Volatile var intercept = false
+            private set
+        @Volatile var mode = "key"
             private set
         private var instance: WeakReference<HomeKeyService>? = null
 
@@ -156,7 +181,13 @@ class HomeKeyService : AccessibilityService() {
         /** Called at app start and when "Home button opens Frost-flix" changes. */
         fun setIntercept(on: Boolean) {
             intercept = on
-            instance?.get()?.let { s -> android.os.Handler(android.os.Looper.getMainLooper()).post { s.applyFilter() } }
+            instance?.get()?.let { s -> android.os.Handler(android.os.Looper.getMainLooper()).post { s.configureKeyFilter() } }
+        }
+
+        /** Called at app start and when "Home button mode" changes. */
+        fun setMode(m: String) {
+            mode = if (m == "watch") "watch" else "key"
+            instance?.get()?.let { s -> android.os.Handler(android.os.Looper.getMainLooper()).post { s.configureKeyFilter() } }
         }
     }
 }
