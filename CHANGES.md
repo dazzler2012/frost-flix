@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d18`. `versionCode` is 42 (upstream 25).
+- `versionName` changed to `1.9.3-d19`. `versionCode` is 43 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -354,3 +354,8 @@ Goal: let double-press Home (recent apps) work on the NVIDIA Shield while Home s
   - **Catch Home key** (`key`, default): current behaviour. `HomeKeyService.configureKeyFilter()` sets `FLAG_REQUEST_FILTER_KEY_EVENTS` at runtime and catches short Home presses before the system sees them, so the stock launcher never flashes. `ACTION_UP` is now consumed only when its matching `ACTION_DOWN` was consumed. Long-press pass-through and the single-instance guard are kept.
   - **Watch launcher** (`watch`): `HomeKeyService.configureKeyFilter()` clears `FLAG_REQUEST_FILTER_KEY_EVENTS` and `onKeyEvent` always returns `false`, so Android handles the Home button itself (including double-press Home for recent apps on the Shield). When the watched stock launcher (`com.google.android.apps.tv.launcherx` or `com.google.android.tvlauncher`) reports `TYPE_WINDOW_STATE_CHANGED`, Frost-flix brings `MainActivity` to the front with a 250 ms debounce, never reacting to Frost-flix itself, System UI, Settings or the recents overlay.
 - **Not verified on the TV:** Watch launcher mode and double-press Home (recent apps) on the Shield, switching between Catch Home key and Watch launcher at runtime, and the 250 ms debounce. Not compiled or run on a device in this session.
+
+## Restore HOME intent filter (1.9.3-d19)
+
+- Restored the HOME intent filter removed in d17, by decision, so Frost-flix can be set as the system Home app (adb: `cmd package set-home-activity`). d16's single-instance guard handles duplicate launches.
+- **Not verified on the TV:** setting Frost-flix as the system Home app and launching via Home and the app list. Not compiled or run on a device in this session.
