@@ -200,8 +200,8 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
 
     // The current backdrop as a small bitmap: every glass surface refracts it. The page backdrop only
     // switches once the glass copy is ready, and both crossfade together, so the glass never lags behind.
-    var backImgs by remember { mutableStateOf<Triple<ImageBitmap, ImageBitmap, ImageBitmap>?>(null) }
-    var prevImgs by remember { mutableStateOf<Triple<ImageBitmap, ImageBitmap, ImageBitmap>?>(null) }
+    var backImgs by remember { mutableStateOf<Pair<ImageBitmap, ImageBitmap>?>(null) }
+    var prevImgs by remember { mutableStateOf<Pair<ImageBitmap, ImageBitmap>?>(null) }
     var shownBackdrop by remember { mutableStateOf<ImageBitmap?>(null) }
     var prevBackdrop by remember { mutableStateOf<ImageBitmap?>(null) }
     // Which picture is on screen: the title text waits for it, so text and picture change together.
@@ -240,16 +240,15 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
             val b = backImgs; val p = prevImgs
             GlassPics(
                 bmp = b?.first,
-                sharp = shownBackdrop ?: b?.second,
-                heavy = b?.third,
+                sharp = shownBackdrop,
+                heavy = b?.second,
                 prevBmp = p?.first,
-                prevSharp = if (p != null) (prevBackdrop ?: p.second) else null,
+                prevSharp = if (p != null) prevBackdrop else null,
             )
         }
     }
-    LaunchedEffect(backdrop, settings.blurRadius, settings.glassRes, homeStarted) {
+    LaunchedEffect(backdrop, settings.blurRadius, homeStarted) {
         if (!homeStarted) return@LaunchedEffect
-        images.res = settings.glassRes
         val u = backdrop ?: return@LaunchedEffect
         // Wait for both the full hardware picture and its glass copy, then switch them in the same frame.
         // Originals are big downloads: if the original is not cached yet, show the 1280 px copy first
@@ -263,15 +262,15 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         var fullBmp: ImageBitmap? = null
         var upgrade: kotlinx.coroutines.Deferred<coil3.request.ImageResult?>? = null
         val high = settings.imageQuality == "high"
-        val orig = async { loader.execute(imgReq(ctx, if (high) sized(u, "w1280") else u)) }
+        val orig = async { loader.execute(imgReq(ctx, if (high) sized(u, "w1280") else u, prepare = true)) }
         val next = kotlinx.coroutines.coroutineScope {
             val g = async { images.glass(ctx, u, settings.blurRadius) }
             fullBmp = kotlinx.coroutines.withTimeoutOrNull(120) { bmpOf(orig.await()) }
             if (fullBmp == null && !high && sized(u, "w1280") != u) {
-                fullBmp = bmpOf(loader.execute(imgReq(ctx, sized(u, "w1280"))))
+                fullBmp = bmpOf(loader.execute(imgReq(ctx, sized(u, "w1280"), prepare = true)))
                 upgrade = orig
             } else if (fullBmp == null) fullBmp = bmpOf(orig.await())
-            g.await()?.let { Triple(it.blurred, it.sharp, it.heavy) }
+            g.await()?.let { Pair(it.blurred, it.heavy) }
         }
         val readyBmp = fullBmp ?: return@LaunchedEffect
         val first = backImgs == null
@@ -591,14 +590,14 @@ private fun Backdrop(
                     drawRect(brush = fallback, blendMode = BlendMode.Src)
                 } else {
                     if (prev != null && m < 1f) {
-                        drawCropped(prev, alpha = 1f, quality = FilterQuality.Low, blendMode = BlendMode.SrcOver)
+                        drawCropped(prev, alpha = 1f, quality = FilterQuality.Medium, blendMode = BlendMode.SrcOver)
                         if (cur != null) {
-                            drawCropped(cur, alpha = m, quality = FilterQuality.Low, blendMode = BlendMode.SrcOver)
+                            drawCropped(cur, alpha = m, quality = FilterQuality.Medium, blendMode = BlendMode.SrcOver)
                         }
                     } else if (cur != null) {
-                        drawCropped(cur, alpha = 1f, quality = FilterQuality.Low, blendMode = BlendMode.SrcOver)
+                        drawCropped(cur, alpha = 1f, quality = FilterQuality.Medium, blendMode = BlendMode.SrcOver)
                     } else if (prev != null) {
-                        drawCropped(prev, alpha = 1f, quality = FilterQuality.Low, blendMode = BlendMode.SrcOver)
+                        drawCropped(prev, alpha = 1f, quality = FilterQuality.Medium, blendMode = BlendMode.SrcOver)
                     }
                     drawRect(brush = leftScrim, topLeft = Offset.Zero, size = leftSize, blendMode = BlendMode.SrcOver)
                     drawRect(brush = bottomScrim, topLeft = bottomTopLeft, size = bottomSize, blendMode = BlendMode.SrcOver)
@@ -671,7 +670,7 @@ private fun HeroSection(
             // Browsing: the text follows every press at once; the picture follows as soon as it is ready.
             if (!app.browsing()) kotlinx.coroutines.withTimeoutOrNull(2500L) {
                 kotlinx.coroutines.coroutineScope {
-                    if (t.background.isNotBlank()) launch { loader.execute(imgReq(ctx, t.background)) }
+                    if (t.background.isNotBlank()) launch { loader.execute(imgReq(ctx, t.background, prepare = true)) }
                     if (t.background.isNotBlank()) launch { images.glass(ctx, t.background, settings.blurRadius) }
                     if (t.logo.isNotBlank()) launch { loader.execute(logoReq(ctx, t.logo)) }
                 }
@@ -689,7 +688,7 @@ private fun HeroSection(
         val loader = SingletonImageLoader.get(ctx)
         while (true) {
             val next = gallery[(shot + 1).mod(gallery.size)]
-            images.track(loader.enqueue(imgReq(ctx, next))); launch { images.glass(ctx, next, settings.blurRadius) }
+            images.track(loader.enqueue(imgReq(ctx, next, prepare = true))); launch { images.glass(ctx, next, settings.blurRadius) }
             delay(shotMs)
             if (shot + 1 >= gallery.size) break
             shot++
@@ -725,11 +724,11 @@ private fun HeroSection(
         if (window.isEmpty() || !started) return@LaunchedEffect
         val loader = SingletonImageLoader.get(ctx)
         // Both directions, a few slides deep, hardware backdrops + glass copies included.
-        for ((k, n) in window) {
+        for ((_, n) in window) {
             if (n.background.isNotBlank()) {
                 val u = n.background
-                val preloadUrl = if (kotlin.math.abs(k) <= 1 && settings.imageQuality != "high") u else sized(u, "w1280")
-                images.track(loader.enqueue(imgReq(ctx, preloadUrl)))
+                val preloadUrl = if (settings.imageQuality != "high") u else sized(u, "w1280")
+                images.track(loader.enqueue(imgReq(ctx, preloadUrl, prepare = true)))
                 launch { images.glass(ctx, u, settings.blurRadius) }
             }
             if (n.logo.isNotBlank()) images.track(loader.enqueue(logoReq(ctx, n.logo)))

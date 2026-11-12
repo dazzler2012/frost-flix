@@ -6,7 +6,6 @@ import android.util.LruCache
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
@@ -17,8 +16,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.asCoroutineDispatcher
 
-/** The three small copies of a backdrop that the glass refracts: blurred (setting), sharp, heavy (folder / veil). */
-data class GlassImages(val blurred: ImageBitmap, val sharp: ImageBitmap, val heavy: ImageBitmap)
+/** The two small blurred copies of a backdrop that the glass refracts: blurred (setting) and heavy (folder / veil). */
+data class GlassImages(val blurred: ImageBitmap, val heavy: ImageBitmap)
 
 /** A TMDB image at another size ("w780", "w1280"); other URLs are returned unchanged. */
 fun sized(url: String, size: String) = url.replace("/t/p/original/", "/t/p/$size/")
@@ -53,11 +52,8 @@ val LocalImageCaches = staticCompositionLocalOf<ImageCaches> { error("No ImageCa
  * Glass copies and in-flight preloads for the home screen. Provided by MainActivity and cleared on ON_STOP via
  * Compose DisposableEffect so no background jobs or cached glass bitmaps outlive the visible session.
  */
-class ImageCaches(glassRes: Int) {
-    /** Width of the glass copies (Settings → Performance → Glass detail). */
-    @Volatile var res: Int = glassRes
-
-    // ---- Glass copies: three small bitmaps per backdrop (sharp + two blurred copies), kept only for nearby slides.
+class ImageCaches {
+    // ---- Glass copies: two small blurred bitmaps per backdrop, kept only for nearby slides.
     private val glass = LruCache<String, GlassImages>(8)
 
     /**
@@ -68,7 +64,7 @@ class ImageCaches(glassRes: Int) {
         set(v) { val n = v.coerceIn(4, 16); if (n != field) { field = n; glass.resize(n) } }
     private val pending = HashMap<String, Deferred<GlassImages?>>()
 
-    fun peekGlass(url: String, blur: Int): GlassImages? = glass.get("$blur|$res|$url")
+    fun peekGlass(url: String, blur: Int): GlassImages? = glass.get("$blur|$url")
 
     /**
      * Glass copies of [url], prepared ahead of time so a slide, its backdrop and the glass in front of it all
@@ -76,23 +72,19 @@ class ImageCaches(glassRes: Int) {
      * again) only stops waiting, it never cancels a job other callers are waiting for.
      */
     suspend fun glass(ctx: Context, url: String, blur: Int): GlassImages? {
-        val r = res
-        val key = "$blur|$r|$url"
+        val key = "$blur|$url"
         glass.get(key)?.let { return it }
         val job = synchronized(pending) {
             pending.getOrPut(key) {
                 blurScope.async {
                     try {
                         val req = ImageRequest.Builder(ctx.applicationContext).data(sized(url, "w780"))
-                            .size(r, r * 9 / 16).build()
+                            .size(480, 270).build()
                         val resImg = (SingletonImageLoader.get(ctx.applicationContext).execute(req) as? SuccessResult)?.image
                         val src = (resImg as? coil3.BitmapImage)?.bitmap ?: resImg?.toBitmap()
                         src?.let {
-                            val sh = if (it.isMutable) it.copy(Bitmap.Config.ARGB_8888, false) else it
-                            sh.prepareToDraw()
                             GlassImages(
                                 BitmapTracker.track(blurredBackdrop(it, blur), "glass"),
-                                BitmapTracker.track(sh.asImageBitmap(), "glass"),
                                 BitmapTracker.track(blurredBackdrop(it, 80), "glass"),
                             )
                         }?.also { glass.put(key, it) }

@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d19`. `versionCode` is 43 (upstream 25).
+- `versionName` changed to `1.9.3-d20`. `versionCode` is 44 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -359,3 +359,12 @@ Goal: let double-press Home (recent apps) work on the NVIDIA Shield while Home s
 
 - Restored the HOME intent filter removed in d17, by decision, so Frost-flix can be set as the system Home app (adb: `cmd package set-home-activity`). d16's single-instance guard handles duplicate launches.
 - **Not verified on the TV:** setting Frost-flix as the system Home app and launching via Home and the app list. Not compiled or run on a device in this session.
+
+## Sharper backdrops and faster D-pad repeat (1.9.3-d20)
+
+- **Carousel preload:** when `imageQuality != "high"` (Balanced and Quality modes), all slides in the `prefetchDepth` window now preload the original URL at `1920x1080` instead of `w1280` for `|k| > 1`, so stepping across slides hits the `1920x1080` memory cache entry directly instead of falling back to `1280x720` after the 120 ms timeout.
+- **Backdrop decode and filtering:** backdrop requests now pass `prepare = true` (`Bitmap.prepareToDraw()`) so software bitmaps are uploaded to the GPU off the UI thread before the first frame they are drawn, and `Backdrop` draws them with `FilterQuality.Medium` instead of `FilterQuality.Low`.
+- **Top Shelf:** the fallback gradient is drawn at `1920x1080` when `imageQuality != "high"` (`1280x720` in Performance mode), and `appRows` passes preview-program URLs through `CatalogRepository.big()` so TMDB URLs use `/t/p/original/`.
+- **Removed `GlassImages.sharp` and "Glass detail":** `GlassImages.sharp` was never read once `shownBackdrop` was ready, and `blurredBackdrop` shrinks its input to at most 320 px regardless of `glassRes`. Removed `GlassImages.sharp` and the `glassRes` ("Glass detail") setting from `Settings`, `SettingsScreen` and `Backup` (`Backup` import ignores `"glassRes"` via `RETIRED_KEYS`).
+- **D-pad hold:** raised the repeat limit in `MainActivity.dispatchKeyEvent` from 10 to 20 steps per second (`REPEAT_MS = 50L`).
+- **Not verified on the TV:** backdrop sharpness in Balanced and Quality modes, Top Shelf gradient and app-row resolutions, memory usage with full-size preloads, and D-pad repeat responsiveness on the Shield. Not compiled or run on a device in this session.

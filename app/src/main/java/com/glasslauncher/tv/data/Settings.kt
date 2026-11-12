@@ -60,9 +60,6 @@ class Settings(private val ctx: Context) {
     /** performance | balanced | quality | custom: what is in effect, with Auto resolved. */
     fun effectiveMode(): String = perfMode.let { if (it == "auto") autoTier else it }
 
-    /** Glass copies of the backdrop: 480 px (light, default) or 720 px (crisper glass, more memory). */
-    var glassRes: Int get() = i("glassRes", 480); set(v) { putI("glassRes", if (v >= 720) 720 else 480); userTuned() }
-
     /** Which picture a title uses: main | second | best (highest resolution) | addon (the add-on's own). */
     var artChoice: String get() = s("artChoice", "main"); set(v) = putS("artChoice", v)
     /** Per-title picture picked with a long press on the carousel: "key\turl" lines. */
@@ -97,11 +94,11 @@ class Settings(private val ctx: Context) {
 
     private fun applyPreset(tier: String) {
         when (tier) {
-            "performance" -> { imageQuality = "high"; prefetchDepth = 2; transitionMs = 250; refraction = 0; heroGallery = false; glassRes = 480 }
+            "performance" -> { imageQuality = "high"; prefetchDepth = 2; transitionMs = 250; refraction = 0; heroGallery = false }
             // Balanced (Auto on 3-4 GB boxes such as the Shield TV Pro): 3 slides prepared ahead and a 350 ms
             // crossfade (were 4 and 450 ms) keep less decoding and fewer animated frames on 4-core boxes.
-            "balanced" -> { imageQuality = "max"; prefetchDepth = 3; transitionMs = 350; refraction = 6; heroGallery = true; galleryShots = 2; glassRes = 480 }
-            "quality" -> { imageQuality = "max"; prefetchDepth = 6; transitionMs = 700; refraction = 14; heroGallery = true; galleryShots = 3; glassRes = 720 }
+            "balanced" -> { imageQuality = "max"; prefetchDepth = 3; transitionMs = 350; refraction = 6; heroGallery = true; galleryShots = 2 }
+            "quality" -> { imageQuality = "max"; prefetchDepth = 6; transitionMs = 700; refraction = 14; heroGallery = true; galleryShots = 3 }
         }
     }
 

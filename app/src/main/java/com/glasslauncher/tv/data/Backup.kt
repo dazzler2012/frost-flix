@@ -45,7 +45,6 @@ class Backup(
     private val specs: List<Spec> = listOf(
         // Look and layout
         Spec.S("perfMode", "Performance mode", setOf("auto", "performance", "balanced", "quality", "custom")),
-        Spec.I("glassRes", "Glass detail", 480, 720),
         Spec.S("imageQuality", "Picture quality", setOf("high", "max")),
         Spec.I("prefetchDepth", "Prepare ahead", 1, 8),
         Spec.I("transitionMs", "Slide transition", 100, 2000),
@@ -343,7 +342,7 @@ class Backup(
         private const val MAX_FILE_BYTES = 20 * 1024 * 1024
         private const val MAX_ICON_BYTES = 2L * 1024 * 1024
         private val PKG = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$")
-        /** Settings that no longer exist; older backups may still have them (tileBacking: removed in 1.9.3-d17). */
-        private val RETIRED_KEYS = setOf("tileBacking")
+        /** Settings that no longer exist; older backups may still have them (tileBacking: removed in 1.9.3-d17; glassRes: removed in 1.9.3-d20). */
+        private val RETIRED_KEYS = setOf("tileBacking", "glassRes")
     }
 }

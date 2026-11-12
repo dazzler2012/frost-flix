@@ -58,7 +58,7 @@ class TopShelf(
     private fun appRows(pkg: String): List<String> {
         synchronized(rows) { rows[pkg]?.takeIf { System.currentTimeMillis() - it.at < ROWS_TTL_MS }?.let { return it.urls } }
         val urls = previewPrograms().filter { it.pkg == pkg }.flatMap { listOf(it.poster, it.thumb) }
-            .filter { usable(it) }.distinct().take(MAX_PICTURES)
+            .filter { usable(it) }.map { CatalogRepository.big(it) }.distinct().take(MAX_PICTURES)
         synchronized(rows) { rows[pkg] = Cached(System.currentTimeMillis(), urls) }
         return urls
     }
@@ -124,12 +124,15 @@ class TopShelf(
     /** The gradient picture of [e] as a file link; drawn once per icon (pack, custom icon) and kept. */
     private suspend fun gradient(e: AppEntry): String {
         val art = runCatching { apps.artwork(e) }.getOrNull()
-        val name = "${e.pkg}_${settings.iconPack.hashCode()}_${art?.let { it.bmp.width * 10000 + it.bmp.height } ?: 0}_${icons.fileFor(e.pkg).lastModified()}.jpg"
+        val full = settings.imageQuality != "high"
+        val w = if (full) 1920 else 1280
+        val h = if (full) 1080 else 720
+        val name = "${e.pkg}_${w}_${settings.iconPack.hashCode()}_${art?.let { it.bmp.width * 10000 + it.bmp.height } ?: 0}_${icons.fileFor(e.pkg).lastModified()}.jpg"
         val f = File(dir, name)
         if (!f.exists()) runCatching {
-            // Old pictures of this app (another icon) go.
+            // Old pictures of this app (another icon or size) go.
             dir.listFiles()?.filter { it.name.startsWith(e.pkg + "_") && it.name != name }?.forEach { it.delete() }
-            val bmp = drawGradient(art?.bmp?.asAndroidBitmap(), art?.transparent == true)
+            val bmp = drawGradient(art?.bmp?.asAndroidBitmap(), art?.transparent == true, w, h)
             val tmp = File(dir, "$name.tmp")
             tmp.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
             bmp.recycle()
@@ -138,8 +141,7 @@ class TopShelf(
         return Uri.fromFile(f).toString()
     }
 
-    private fun drawGradient(icon: Bitmap?, transparent: Boolean): Bitmap {
-        val w = 1280; val h = 720
+    private fun drawGradient(icon: Bitmap?, transparent: Boolean, w: Int, h: Int): Bitmap {
         val base = icon?.let { mainColour(it) } ?: 0xFF2A2350.toInt()
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(out)

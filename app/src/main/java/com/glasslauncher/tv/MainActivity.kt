@@ -48,7 +48,7 @@ class MainActivity : ComponentActivity() {
         hideBars()
         val app = application as GlassApp
         setContent {
-            val caches = remember { ImageCaches(app.settings.glassRes) }
+            val caches = remember { ImageCaches() }
             val lifecycleOwner = LocalLifecycleOwner.current
             DisposableEffect(lifecycleOwner, caches) {
                 images = caches
@@ -174,7 +174,7 @@ class MainActivity : ComponentActivity() {
     private companion object {
         /** The live MainActivity (see onCreate). Weak, so it never keeps a destroyed one alive. */
         var current: java.lang.ref.WeakReference<MainActivity>? = null
-        const val REPEAT_MS = 100L
+        const val REPEAT_MS = 50L
         const val STALE_MS = 120L
     }
 

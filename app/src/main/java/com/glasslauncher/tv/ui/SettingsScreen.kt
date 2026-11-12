@@ -169,9 +169,6 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                     fun n(m: String) = when (m) { "performance" -> "Performance"; "quality" -> "Quality"; "balanced" -> "Balanced"; else -> "Custom" }
                     if (st.perfMode == "auto") "Auto (${n(st.autoTier)})" else n(st.perfMode)
                 }, { st.applyMode(cycle(listOf("auto", "performance", "balanced", "quality"), st.perfMode.takeIf { m -> m != "custom" } ?: "auto", it)) }),
-                Adjust("Glass detail", "Resolution of the picture the glass bends (higher = crisper glass, more memory)", {
-                    when (st.glassRes) { 720 -> "Sharp (720 px)"; else -> "Standard (480 px)" }
-                }, { st.glassRes = cycle(listOf(480, 720), st.glassRes, it) }),
                 Adjust("Picture quality", "Carousel backdrops", { if (st.imageQuality == "high") "High (1280 px)" else "Maximum (original)" },
                     { st.imageQuality = cycle(listOf("high", "max"), st.imageQuality, it) }),
                 Adjust("Prepare ahead", "Slides loaded before you get to them", { "${st.prefetchDepth}" }, { st.prefetchDepth += it }),

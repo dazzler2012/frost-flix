@@ -205,9 +205,6 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
         keys.map { m.optString(it).trim() }.firstOrNull { it.isNotBlank() && !it.equals("null", true) }.orEmpty()
     private fun httpUrl(m: JSONObject, vararg keys: String) =
         keys.map { m.optString(it).trim() }.firstOrNull { it.startsWith("http") }.orEmpty()
-    private fun big(u: String) = Regex("(/t/p/)(w45|w92|w154|w185|w300|w342|w500|w780|w1280)(/)")
-        .replace(u) { it.groupValues[1] + "original" + it.groupValues[3] }
-        .replace(Regex("(metahub\\.space/(?:background|logo|poster))/(?:small|medium)/"), "$1/large/")
 
     fun parseMeta(m: JSONObject, catType: String): HeroItem? {
         val id = first(m, "id", "_id", "imdb_id", "imdbId")
@@ -302,4 +299,10 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
     }
 
     fun addonName(url: String) = catalogs.value.firstOrNull { it.addon == url }?.addonName ?: (runCatching { java.net.URI(url).host }.getOrNull() ?: url)
+
+    companion object {
+        fun big(u: String) = Regex("(/t/p/)(w45|w92|w154|w185|w300|w342|w500|w780|w1280)(/)")
+            .replace(u) { it.groupValues[1] + "original" + it.groupValues[3] }
+            .replace(Regex("(metahub\\.space/(?:background|logo|poster))/(?:small|medium)/"), "$1/large/")
+    }
 }
