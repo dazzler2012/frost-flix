@@ -262,12 +262,14 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         var fullBmp: ImageBitmap? = null
         var upgrade: kotlinx.coroutines.Deferred<coil3.request.ImageResult?>? = null
         val high = settings.imageQuality == "high"
-        val orig = async { loader.execute(imgReq(ctx, if (high) sized(u, "w1280") else u, prepare = true)) }
+        val orig = async {
+            loader.execute(if (high) imgReq(ctx, sized(u, "w1280"), 1280, 720, prepare = true) else imgReq(ctx, u, 1920, 1080, prepare = true))
+        }
         val next = kotlinx.coroutines.coroutineScope {
             val g = async { images.glass(ctx, u, settings.blurRadius) }
             fullBmp = kotlinx.coroutines.withTimeoutOrNull(120) { bmpOf(orig.await()) }
             if (fullBmp == null && !high && sized(u, "w1280") != u) {
-                fullBmp = bmpOf(loader.execute(imgReq(ctx, sized(u, "w1280"), prepare = true)))
+                fullBmp = bmpOf(loader.execute(imgReq(ctx, sized(u, "w1280"), 1280, 720, prepare = true)))
                 upgrade = orig
             } else if (fullBmp == null) fullBmp = bmpOf(orig.await())
             g.await()?.let { Pair(it.blurred, it.heavy) }
@@ -275,6 +277,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         val readyBmp = fullBmp ?: return@LaunchedEffect
         val first = backImgs == null
         fadeMs = when {
+            first -> 250
             shelfFade -> SHELF_FADE_MS
             app.browsing() -> 220
             else -> settings.transitionMs
@@ -285,11 +288,11 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         prevImgs = backImgs
         prevBackdrop = shownBackdrop
         if (next != null) backImgs = next
-        if (!first && next != null) mix.snapTo(0f)
+        if (next != null) mix.snapTo(0f)
         shownBackdrop = readyBmp
         shownUrl.value = u
         try {
-            if (first || next == null) mix.snapTo(1f)
+            if (next == null) mix.snapTo(1f)
             else mix.animateTo(1f, tween(fadeMs, easing = androidx.compose.animation.core.LinearEasing))
         } finally {
             // Also when this fade is cut short by the next slide: never leave the glass half faded with the
@@ -579,15 +582,12 @@ private fun Backdrop(
                 startY = bottomStartY,
                 endY = size.height.coerceAtLeast(bottomStartY + 1f),
             )
-            val fallback = Brush.linearGradient(
-                listOf(Color(0xFF110E26), Color(0xFF3A1B52), Color(0xFF0D1A3A))
-            )
             onDrawBehind {
                 val cur = curOf()
                 val prev = prevOf()
-                val m = if (prev != null) mixOf().coerceIn(0f, 1f) else 1f
+                val m = mixOf().coerceIn(0f, 1f)
                 if (cur == null && prev == null) {
-                    drawRect(brush = fallback, blendMode = BlendMode.Src)
+                    drawRect(color = Color.Black, blendMode = BlendMode.Src)
                 } else {
                     if (prev != null && m < 1f) {
                         drawCropped(prev, alpha = 1f, quality = FilterQuality.Medium, blendMode = BlendMode.SrcOver)
@@ -595,7 +595,7 @@ private fun Backdrop(
                             drawCropped(cur, alpha = m, quality = FilterQuality.Medium, blendMode = BlendMode.SrcOver)
                         }
                     } else if (cur != null) {
-                        drawCropped(cur, alpha = 1f, quality = FilterQuality.Medium, blendMode = BlendMode.SrcOver)
+                        drawCropped(cur, alpha = m, quality = FilterQuality.Medium, blendMode = BlendMode.SrcOver)
                     } else if (prev != null) {
                         drawCropped(prev, alpha = 1f, quality = FilterQuality.Medium, blendMode = BlendMode.SrcOver)
                     }
@@ -670,7 +670,11 @@ private fun HeroSection(
             // Browsing: the text follows every press at once; the picture follows as soon as it is ready.
             if (!app.browsing()) kotlinx.coroutines.withTimeoutOrNull(2500L) {
                 kotlinx.coroutines.coroutineScope {
-                    if (t.background.isNotBlank()) launch { loader.execute(imgReq(ctx, t.background, prepare = true)) }
+                    if (t.background.isNotBlank()) launch {
+                        val req = if (settings.imageQuality == "high") imgReq(ctx, sized(t.background, "w1280"), 1280, 720, prepare = true)
+                            else imgReq(ctx, t.background, 1920, 1080, prepare = true)
+                        loader.execute(req)
+                    }
                     if (t.background.isNotBlank()) launch { images.glass(ctx, t.background, settings.blurRadius) }
                     if (t.logo.isNotBlank()) launch { loader.execute(logoReq(ctx, t.logo)) }
                 }
@@ -688,7 +692,9 @@ private fun HeroSection(
         val loader = SingletonImageLoader.get(ctx)
         while (true) {
             val next = gallery[(shot + 1).mod(gallery.size)]
-            images.track(loader.enqueue(imgReq(ctx, next, prepare = true))); launch { images.glass(ctx, next, settings.blurRadius) }
+            val nextReq = if (settings.imageQuality == "high") imgReq(ctx, sized(next, "w1280"), 1280, 720, prepare = true)
+                else imgReq(ctx, next, 1920, 1080, prepare = true)
+            images.track(loader.enqueue(nextReq)); launch { images.glass(ctx, next, settings.blurRadius) }
             delay(shotMs)
             if (shot + 1 >= gallery.size) break
             shot++
@@ -721,14 +727,29 @@ private fun HeroSection(
         }
     val windowKey = window.map { (k, n) -> "$k|${n.key}|${n.background}|${n.logo}" }
     LaunchedEffect(windowKey, settings.imageQuality, settings.blurRadius, started) {
+        images.cancelPreloads()
         if (window.isEmpty() || !started) return@LaunchedEffect
+        // Pause preloads while a D-pad key is being held; resume ~300 ms after the last key press.
+        while (true) {
+            val since = System.currentTimeMillis() - maxOf(app.navAt, app.dpadAt)
+            if (since >= 300L) break
+            delay(300L - since)
+        }
+        // The current slide's image must finish loading first so preloads never compete with it.
+        val curBg = target?.background.orEmpty()
+        if (curBg.isNotBlank() && shownUrl.value != curBg) {
+            kotlinx.coroutines.withTimeoutOrNull(2500L) {
+                androidx.compose.runtime.snapshotFlow { shownUrl.value }.first { u -> u == curBg || u in (target?.gallery ?: emptyList()) }
+            }
+        }
         val loader = SingletonImageLoader.get(ctx)
-        // Both directions, a few slides deep, hardware backdrops + glass copies included.
-        for ((_, n) in window) {
+        // Immediate neighbours (±1) at full 1920x1080 in Balanced/Quality; further slides at 1280x720 so all preloads fit in Coil's memory cache.
+        for ((k, n) in window) {
             if (n.background.isNotBlank()) {
                 val u = n.background
-                val preloadUrl = if (settings.imageQuality != "high") u else sized(u, "w1280")
-                images.track(loader.enqueue(imgReq(ctx, preloadUrl, prepare = true)))
+                val full = kotlin.math.abs(k) <= 1 && settings.imageQuality != "high"
+                val req = if (full) imgReq(ctx, u, 1920, 1080, prepare = true) else imgReq(ctx, sized(u, "w1280"), 1280, 720, prepare = true)
+                images.track(loader.enqueue(req))
                 launch { images.glass(ctx, u, settings.blurRadius) }
             }
             if (n.logo.isNotBlank()) images.track(loader.enqueue(logoReq(ctx, n.logo)))

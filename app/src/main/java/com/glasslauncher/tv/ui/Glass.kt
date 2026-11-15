@@ -283,15 +283,16 @@ fun LiquidSurface(
         } else Modifier)) {
             val p = env.pics.value
             val bmp = if (sharp) p.sharp ?: p.bmp else p.bmp
-            if (bmp == null) { drawRect(Color(0xFF1A1A22)); return@Canvas }
+            if (bmp == null) { drawRect(Color.Black); return@Canvas }
             val at = pos.value
             val prev = if (sharp) p.prevSharp ?: p.prevBmp else p.prevBmp
-            val m = if (prev != null) (env.mix?.value ?: 1f).coerceIn(0f, 1f) else 1f
+            val m = (env.mix?.value ?: 1f).coerceIn(0f, 1f)
             if (prev != null && m < 1f) {
                 drawBackdropRegion(prev, env.rootW, env.rootH, at)
                 drawBackdropRegion(bmp, env.rootW, env.rootH, at, alpha = m)
             } else {
-                drawBackdropRegion(bmp, env.rootW, env.rootH, at)
+                if (m < 1f) drawRect(Color.Black)
+                drawBackdropRegion(bmp, env.rootW, env.rootH, at, alpha = m)
             }
             drawScrims(env.rootW, env.rootH, at)
             val v = env.veil?.value ?: 0f

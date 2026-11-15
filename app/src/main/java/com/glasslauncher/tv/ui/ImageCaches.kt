@@ -103,10 +103,16 @@ class ImageCaches {
     // would keep downloading after ON_STOP. [stop] disposes the ones still running.
     private val preloads = HashSet<coil3.request.Disposable>()
 
-    /** Remembers a preload so [stop] can cancel it; finished ones are dropped on the next call. */
+    /** Remembers a preload so [stop] or [cancelPreloads] can cancel it; finished ones are dropped on the next call. */
     fun track(d: coil3.request.Disposable) = synchronized(preloads) {
         preloads.removeAll { it.isDisposed || it.job.isCompleted }
         preloads.add(d)
+    }
+
+    /** Cancels in-flight preload requests so the current slide's picture never waits behind old preloads. */
+    fun cancelPreloads() = synchronized(preloads) {
+        preloads.forEach { it.dispose() }
+        preloads.clear()
     }
 
     /**
@@ -114,7 +120,7 @@ class ImageCaches {
      * screen started keeps using the network or the CPU behind another app.
      */
     fun stop() {
-        synchronized(preloads) { preloads.forEach { it.dispose() }; preloads.clear() }
+        cancelPreloads()
         synchronized(pending) { pending.values.forEach { it.cancel() }; pending.clear() }
         clear()
     }

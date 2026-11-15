@@ -40,7 +40,7 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
             // priority, so the UI thread and the render thread always get a core.
             .decoderCoroutineContext(decodeDispatcher)
             .bitmapFactoryMaxParallelism(2)
-            .memoryCache { coil3.memory.MemoryCache.Builder().maxSizePercent(context, 0.15).build() }
+            .memoryCache { coil3.memory.MemoryCache.Builder().maxSizePercent(context, 0.20).build() }
             .diskCache {
                 coil3.disk.DiskCache.Builder()
                     .directory(java.io.File(cacheDir, "images").absolutePath.let { okio.Path.Companion.run { it.toPath() } })
@@ -145,6 +145,8 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
     val homeRev = androidx.compose.runtime.mutableIntStateOf(0)
     /** Last Left/Right in the carousel: while browsing, slides switch at once and fades are short. */
     @Volatile var navAt = 0L
+    /** Last D-pad key press anywhere in MainActivity (ms): carousel preloads pause while a key is held. */
+    @Volatile var dpadAt = 0L
     fun browsing() = System.currentTimeMillis() - navAt < 1200
 
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

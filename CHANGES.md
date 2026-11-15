@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d20`. `versionCode` is 44 (upstream 25).
+- `versionName` changed to `1.9.3-d21`. `versionCode` is 45 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -368,3 +368,11 @@ Goal: let double-press Home (recent apps) work on the NVIDIA Shield while Home s
 - **Removed `GlassImages.sharp` and "Glass detail":** `GlassImages.sharp` was never read once `shownBackdrop` was ready, and `blurredBackdrop` shrinks its input to at most 320 px regardless of `glassRes`. Removed `GlassImages.sharp` and the `glassRes` ("Glass detail") setting from `Settings`, `SettingsScreen` and `Backup` (`Backup` import ignores `"glassRes"` via `RETIRED_KEYS`).
 - **D-pad hold:** raised the repeat limit in `MainActivity.dispatchKeyEvent` from 10 to 20 steps per second (`REPEAT_MS = 50L`).
 - **Not verified on the TV:** backdrop sharpness in Balanced and Quality modes, Top Shelf gradient and app-row resolutions, memory usage with full-size preloads, and D-pad repeat responsiveness on the Shield. Not compiled or run on a device in this session.
+
+## Smooth carousel browsing, return fade and CI hardening (1.9.3-d21)
+
+- **Carousel preloads:** `ImageCaches.cancelPreloads()` now disposes in-flight preload jobs immediately whenever the carousel slide changes. New preloads wait until 300 ms after the last D-pad key (`MainActivity.dispatchKeyEvent` updates `GlassApp.dpadAt` on every D-pad down event) and until the current slide's image has finished loading (`shownUrl`), so the current slide always loads first without competing with background preloads.
+- **Cache vs preload sizing:** full-size (`1920x1080`) preloads in Balanced and Quality modes are kept to the immediate neighbours (`|k| <= 1`, ~`8.3 MB` each), while slides further out (`|k| > 1`) and Performance mode decode `w1280` at `1280x720` (~`3.7 MB` each, matching the 120 ms fallback cache key), and Coil's memory cache is raised from 15% to 20% of the app's memory class (`GlassApp`). Background memory is unchanged (all images and caches are still cleared on `ON_STOP`).
+- **Return to Home:** removed the purple/blue fallback gradient in `Backdrop` and the flat grey fallback in `LiquidSurface`. While the first backdrop after start/return is loading, the screen and glass stay black, then fade the backdrop and glass in together over 250 ms (`mix` `0f` → `1f`). No bitmaps are kept in the background.
+- **CI:** `tools/trakt_ci_check.sh` no longer prints the first or last 4 characters of `TRAKT_CLIENT_ID` (only `set (length N)` or `missing`). `.github/workflows/build.yml` pins `actions/upload-artifact` to commit SHA `ea165f8d65b6e75b540449e92b4886f43607fa02` (`# v4.6.2`).
+- **Not verified on the TV:** carousel responsiveness when holding D-pad, memory usage in the foreground, and the 250 ms fade-in from black on return to Home. Not compiled or run on a device in this session.

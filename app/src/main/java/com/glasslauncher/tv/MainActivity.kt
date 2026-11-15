@@ -164,6 +164,7 @@ class MainActivity : ComponentActivity() {
             else -> false
         }
         if (dpad && event.action == KeyEvent.ACTION_DOWN) {
+            (application as GlassApp).dpadAt = System.currentTimeMillis()
             val now = android.os.SystemClock.uptimeMillis()
             if (event.repeatCount > 0 && (now - event.eventTime > STALE_MS || now - lastDpad < REPEAT_MS)) return true
             lastDpad = now
