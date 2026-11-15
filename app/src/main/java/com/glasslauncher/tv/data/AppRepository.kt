@@ -20,7 +20,7 @@ import kotlinx.coroutines.withContext
 
 data class AppEntry(val pkg: String, val label: String, val component: ComponentName, val leanback: Boolean)
 
-data class Art(val bmp: ImageBitmap, val transparent: Boolean, val light: Boolean = false, val onLight: ImageBitmap = bmp)
+data class Art(val bmp: ImageBitmap, val transparent: Boolean, val onLight: ImageBitmap = bmp)
 
 class AppRepository(private val ctx: Context, private val settings: Settings, private val packs: IconPacks, private val icons: IconStore) {
     private val pm: PackageManager = ctx.packageManager
@@ -194,7 +194,6 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
                         bmp = d.render(iw, fw, fh)
                     }
                 }
-                val light = isLight(bmp)
                 // A transparent icon's darkened copy is only kept when darkening changed something.
                 val dark = if (transparent) darkenWhites(bmp) else null
                 if (!transparent && isOpaque(bmp)) bmp = to565(bmp).also { bmp.recycle() }
@@ -202,7 +201,7 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
                 // when the dock comes back).
                 bmp.prepareToDraw(); dark?.prepareToDraw()
                 val main = com.glasslauncher.tv.ui.BitmapTracker.track(bmp.asImageBitmap(), "icons")
-                Art(main, transparent, light, dark?.let { com.glasslauncher.tv.ui.BitmapTracker.track(it.asImageBitmap(), "icons") } ?: main)
+                Art(main, transparent, dark?.let { com.glasslauncher.tv.ui.BitmapTracker.track(it.asImageBitmap(), "icons") } ?: main)
                     .also { cache.put(key, it) }
             }.getOrNull()
         }
@@ -281,27 +280,6 @@ class AppRepository(private val ctx: Context, private val settings: Settings, pr
         if (!changed) { b.recycle(); return null }
         b.setPixels(px, 0, w, 0, 0, w, h)
         return b
-    }
-
-    /** True when the visible part of the icon is (near) white: it needs darkening on a light plate. */
-    private fun isLight(b: Bitmap): Boolean {
-        var n = 0; var light = 0
-        val stepX = maxOf(1, b.width / 24); val stepY = maxOf(1, b.height / 14)
-        var y = 0
-        while (y < b.height) {
-            var x = 0
-            while (x < b.width) {
-                val p = b.getPixel(x, y)
-                if ((p ushr 24) > 160) {
-                    n++
-                    val r = (p shr 16) and 255; val g = (p shr 8) and 255; val bl = p and 255
-                    if (minOf(r, g, bl) > 200 && maxOf(r, g, bl) - minOf(r, g, bl) < 40) light++
-                }
-                x += stepX
-            }
-            y += stepY
-        }
-        return n > 0 && light * 100 / n >= 70
     }
 
     /** True when a good part of the image is see-through (glyph icons), false for full banners. */

@@ -248,9 +248,9 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
         }
     }
     LaunchedEffect(backdrop, settings.blurRadius, homeStarted) {
-        if (!homeStarted) return@LaunchedEffect
+        if (!homeStarted || app.safeMode) return@LaunchedEffect
         val u = backdrop ?: return@LaunchedEffect
-        // Wait for both the full hardware picture and its glass copy, then switch them in the same frame.
+        // Wait for both the full backdrop picture and its glass copy, then switch them in the same frame.
         // Originals are big downloads: if the original is not cached yet, show the 1280 px copy first
         // (fast) and swap in the original silently once it arrives.
         val loader = SingletonImageLoader.get(ctx)
@@ -311,7 +311,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
     // Top Shelf: once focus has rested on a dock app for a moment, its pictures replace the carousel's, one
     // after another at the slide time while it stays selected.
     LaunchedEffect(homeStarted) {
-        if (!homeStarted) return@LaunchedEffect
+        if (!homeStarted || app.safeMode) return@LaunchedEffect
         androidx.compose.runtime.snapshotFlow { shelfPkg.value }.collectLatest { pkg ->
             if (pkg == null) { if (shelfUrl != null) { shelfFade = true; shelfUrl = null }; return@collectLatest }
             delay(SHELF_SETTLE_MS)
@@ -401,8 +401,8 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
 
         CompositionLocalProvider(LocalGlassEnv provides env, LocalScale provides s) {
             // Nothing under the folder is drawn: it covers the whole screen (the TV GPU is the bottleneck).
-            // Hardware backdrops and cached gradient scrims are composited directly on the GPU via drawWithCache.
-            if (!folderOpen) {
+            // Backdrops and cached gradient scrims are composited directly on the GPU via drawWithCache.
+            if (!folderOpen && !app.safeMode) {
                 Backdrop(
                     prevOf = { prevBackdrop },
                     curOf = { shownBackdrop },
@@ -411,7 +411,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
             }
             // Dock open: the whole page blurs and darkens (the glass draws the same veil, see LiquidSurface).
             val veilOn by remember { androidx.compose.runtime.derivedStateOf { veil.value > 0.01f } }
-            if (veilOn && !folderOpen) {
+            if (veilOn && !folderOpen && !app.safeMode) {
                 // Picture and dimming drawn with their own opacity: no full-screen offscreen layer while it fades.
                 androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
                     val v = veil.value
@@ -433,11 +433,15 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
                     }
                     .focusGroup()
             ) {
-                HeroSection(app, s, hidden = expanded || folderOpen || shelfUrl != null, paused = screen != Screen.Home, metrics = metrics, shownUrl = shownUrl,
-                    heroFocus = heroFocus, firstTile = firstTile, onBackdrop = { heroBackdrop = it },
-                    onHeroFocus = { shelfPkg.value = null })
-                TopBar(app, s, onSettings = { onScreen(Screen.Settings) }, modifier = Modifier.fillMaxWidth().align(Alignment.TopStart))
-                if (app.homeServiceOff.value) HomeServiceBanner(app, s, Modifier.align(Alignment.TopCenter).padding(top = (16 * s).dp))
+                if (app.safeMode) {
+                    SafeModeBanner(s, heroFocus, firstTile, Modifier.align(Alignment.TopStart)) { onScreen(Screen.Settings) }
+                } else {
+                    HeroSection(app, s, hidden = expanded || folderOpen || shelfUrl != null, paused = screen != Screen.Home, metrics = metrics, shownUrl = shownUrl,
+                        heroFocus = heroFocus, firstTile = firstTile, onBackdrop = { heroBackdrop = it },
+                        onHeroFocus = { shelfPkg.value = null })
+                    TopBar(app, s, onSettings = { onScreen(Screen.Settings) }, modifier = Modifier.fillMaxWidth().align(Alignment.TopStart))
+                    if (app.homeServiceOff.value) HomeServiceBanner(app, s, Modifier.align(Alignment.TopCenter).padding(top = (16 * s).dp))
+                }
                 Dock(
                     app = app, s = s, metrics = metrics, screenH = screenHdp, radius = radius,
                     expanded = expanded, onExpanded = { expanded = it },
@@ -446,7 +450,7 @@ fun HomeScreen(app: GlassApp, screen: Screen, onScreen: (Screen) -> Unit) {
                     onMenu = { showMenu(it, false) },
                     onFolder = { folderOpen = true },
                     onFolderMenu = { dialog = MenuDialog("Apps", listOf("Move" to { movingPkg = FOLDER })) },
-                    onShelf = { p -> shelfPkg.value = if (settings.topShelf) p else null },
+                    onShelf = { p -> shelfPkg.value = if (settings.topShelf && !app.safeMode) p else null },
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
             }
@@ -553,7 +557,7 @@ private fun DrawScope.drawCropped(
 
 /**
  * GPU-composited full-screen backdrop and scrims.
- * Hardware bitmaps from Coil are drawn directly via [drawCropped] and darkened on the GPU using cached
+ * Backdrops from Coil are drawn directly via [drawCropped] and darkened on the GPU using cached
  * gradient shaders in [Modifier.drawWithCache] with native [BlendMode.SrcOver] blending—zero CPU-baked
  * 1920×1080 intermediate bitmaps, and neither the bitmaps nor the crossfade progress are read in composition.
  */
@@ -849,6 +853,42 @@ private fun EmptyHint(
                 .focusProperties { down = firstTile }
                 .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
                 .tvPress(onClick = onCatalogs)
+                .clip(RoundedCornerShape(50))
+                .background(if (focused) Color.White.copy(alpha = 0.95f) else Color.White.copy(alpha = 0.14f))
+                .padding(horizontal = (14 * s).dp, vertical = (6 * s).dp),
+        )
+    }
+}
+
+/**
+ * Shown when Frost-flix crashed repeatedly during startup (safe mode): only the dock and this Settings button
+ * are shown until the next normal start. Holds [heroFocus] so Up from the dock reaches Settings.
+ */
+@Composable
+private fun SafeModeBanner(
+    s: Float, heroFocus: FocusRequester, firstTile: FocusRequester,
+    modifier: Modifier, onSettings: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val scaleState = animateFloatAsState(if (focused) 1.06f else 1f, spring(0.6f, 450f), label = "safeBtn")
+    Column(modifier.padding(start = (56 * s).dp, top = (130 * s).dp).widthIn(max = (520 * s).dp)) {
+        Text("Frost-flix · Safe mode", color = Color.White, fontSize = (26 * s).sp, fontWeight = FontWeight.Light, letterSpacing = 2.sp)
+        Spacer(Modifier.height((10 * s).dp))
+        Text(
+            "Frost-flix crashed repeatedly during startup, so catalogs and backgrounds are paused for this session. The next start will be normal.",
+            color = Color.White.copy(alpha = 0.7f), fontSize = (13 * s).sp,
+        )
+        Spacer(Modifier.height((14 * s).dp))
+        Text(
+            "Settings",
+            color = if (focused) Color.Black else Color.White,
+            fontSize = (12 * s).sp, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .graphicsLayer { val sc = scaleState.value; scaleX = sc; scaleY = sc }
+                .focusRequester(heroFocus)
+                .focusProperties { down = firstTile }
+                .onFocusChanged { focused = it.isFocused }
+                .tvPress(onClick = onSettings)
                 .clip(RoundedCornerShape(50))
                 .background(if (focused) Color.White.copy(alpha = 0.95f) else Color.White.copy(alpha = 0.14f))
                 .padding(horizontal = (14 * s).dp, vertical = (6 * s).dp),
@@ -1222,7 +1262,7 @@ private fun Dock(
     // Trakt Watchlist: one row under the apps, only reached by scrolling down (the first screen is unchanged).
     val watchAll by app.cw.watchItems.collectAsState()
     val traktState by app.trakt.state.collectAsState()
-    val watch = if (settings.watchlistRow && traktState == com.glasslauncher.tv.data.Trakt.State.SignedIn) watchAll else emptyList()
+    val watch = if (!app.safeMode && settings.watchlistRow && traktState == com.glasslauncher.tv.data.Trakt.State.SignedIn) watchAll else emptyList()
     val hasBelow = rows.size > 1 || watch.isNotEmpty()
     val watchH = if (watch.isEmpty()) 0f else metrics.gap + WATCH_HEADER * s + watchLift(s, metrics.cellW / (16f / 9f)) + metrics.cellW / (16f / 9f)
 

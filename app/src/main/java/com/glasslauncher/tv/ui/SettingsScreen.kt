@@ -164,7 +164,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                     "performance" -> "Smoothest: lighter pictures, quick fades, flat glass"
                     "quality" -> "Sharpest: original pictures, slow fades, full glass"
                     "balanced" -> "Sharp pictures, smooth navigation"
-                    else -> "Your own mix of the settings below"
+                    else -> "Your own mix of the settings"
                 }, {
                     fun n(m: String) = when (m) { "performance" -> "Performance"; "quality" -> "Quality"; "balanced" -> "Balanced"; else -> "Custom" }
                     if (st.perfMode == "auto") "Auto (${n(st.autoTier)})" else n(st.perfMode)
@@ -172,17 +172,13 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 Adjust("Picture quality", "Carousel backdrops", { if (st.imageQuality == "high") "High (1280 px)" else "Maximum (original)" },
                     { st.imageQuality = cycle(listOf("high", "max"), st.imageQuality, it) }),
                 Adjust("Prepare ahead", "Slides loaded before you get to them", { "${st.prefetchDepth}" }, { st.prefetchDepth += it }),
-                Adjust("Slide transition", "", { "${st.transitionMs} ms" }, { st.transitionMs += it * 50 }),
-                // Refraction needs AGSL (Android 13+); below that the glass is always flat, so the row is hidden.
-                Adjust("Glass refraction", "0 = flat glass (lightest)", { "${st.refraction}" }, { st.refraction += it * 2 }).takeIf { refractionWorks },
-                Toggle("Backdrop gallery", "Several pictures per title", { st.heroGallery }, { st.heroGallery = it }),
-            ).filterNotNull()
+            )
         },
         Category("Carousel") {
             listOf(
                 Toggle("Auto-play", "Slides change on their own", { st.heroAutoplay }, { st.heroAutoplay = it }),
                 Adjust("Slide time", "Seconds before the next title", { "${st.heroIntervalSec} s" }, { st.heroIntervalSec += it }),
-                Adjust("Transition speed", "Fade between slides (lower = faster)", { "${st.transitionMs} ms" }, { st.transitionMs += it * 100 }),
+                Adjust("Transition speed", "Fade between slides (lower = faster)", { "${st.transitionMs} ms" }, { st.transitionMs += it * 50 }),
                 Toggle("Dots auto-hide", "Show them only when the carousel is selected", { st.dotsAutoHide }, { st.dotsAutoHide = it }),
                 Adjust("Title style", "Logo image, plain text, or nothing", {
                     when (st.titleMode) { "logo" -> "Logo"; "text" -> "Text"; else -> "Hidden" }
@@ -375,11 +371,6 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 }, {
                     st.nuvioTarget = cycle(listOf("auto", "nuviotv", "legacy", "reshaped"), st.nuvioTarget, it)
                 }),
-                Act("TMDB token", "Adds title logos, full-size art, synopsis and platform", if (st.tmdbToken.isBlank()) "Not set" else "Set") {
-                    dialog = TextEntry("TMDB read access token", "", "Paste the token") {
-                        st.tmdbToken = it; app.catalogs.clearEnrichment()
-                    }
-                },
             )
         },
         Category("Screensaver") {
@@ -417,7 +408,7 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
         },
         Category("System") {
             listOf(
-                Toggle("Home button opens Frost-flix", "Needs the accessibility service below", { st.interceptHome }, { st.interceptHome = it }),
+                Toggle("Home button opens Frost-flix", "Optional fallback using the accessibility service below", { st.interceptHome }, { st.interceptHome = it }),
                 Adjust("Home button mode", when (st.homeMode) {
                     "watch" -> "Opens Frost-flix when the TV's own launcher appears, so double-press Home (recent apps) keeps working"
                     else -> "Catches the Home key directly so the TV's own launcher never flashes"
@@ -426,10 +417,12 @@ fun SettingsScreen(app: GlassApp, initialCat: Int, onClose: () -> Unit) {
                 }, { st.homeMode = cycle(listOf("key", "watch"), st.homeMode, it) }),
                 Act("Turn on the accessibility service", "Find Frost-flix and switch it on", "") { openSystem(ctx, AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS) },
             ) + (
-                // Frost-flix is not a home app (no HOME intent filter since 1.9.3-d17): the Home button is taken over
-                // by the accessibility service, on a TV and elsewhere.
-                listOf(Note(if (isTv) "Android TV has no usable \"default home app\" choice. To make Home open Frost-flix, switch on the option above, then turn on the Frost-flix accessibility service (Android Settings → Device Preferences → Accessibility → Frost-flix)."
-                    else "Frost-flix is not offered as a \"default home app\". To make Home open Frost-flix, switch on the option above, then turn on the Frost-flix accessibility service in Android's accessibility settings."))
+                // Since 1.9.3-d19 Frost-flix has the HOME intent filter again and can hold the system HOME role;
+                // the accessibility service is an optional fallback ("Catch Home key" or "Watch launcher").
+                listOf(
+                    Note(if (isTv) "Frost-flix can be the system Home app via ADB: adb shell cmd role add-role-holder android.app.role.HOME tv.darren.glassio (switch back to another launcher with the same command and that launcher's package, e.g. com.google.android.tvlauncher). Without ADB, switch on the option above and turn on the Frost-flix accessibility service (Android Settings → Device Preferences → Accessibility → Frost-flix)."
+                        else "Frost-flix can be chosen as the system Home app (or via ADB: adb shell cmd role add-role-holder android.app.role.HOME tv.darren.glassio; switch back with the same command and the other launcher's package). As an optional fallback, switch on the option above and turn on the Frost-flix accessibility service."),
+                )
             )
         },
         Category("Backup") {

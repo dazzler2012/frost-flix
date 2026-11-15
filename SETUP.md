@@ -84,7 +84,12 @@ To update later, repeat step 3 after publishing a new tag.
 
 ## 5. First-run settings on the TV
 
-- **Home button:** Settings → System → turn on "Home button opens Frost-flix", then switch on the Frost-flix accessibility service in the Android TV accessibility settings. Android turns that service off after every update of a sideloaded app, so turn it on again after updating. When it is off, the home screen shows "Home button is off." with a "Turn it back on" button that opens the accessibility settings.
+- **Home button:** since 1.9.3-d19 Frost-flix can hold the system `HOME` role via ADB:
+  ```powershell
+  adb shell cmd role add-role-holder android.app.role.HOME tv.darren.glassio
+  ```
+  To switch back to another launcher, run the same command with that launcher's package (for example `adb shell cmd role add-role-holder android.app.role.HOME com.google.android.tvlauncher` on the Shield, or `com.google.android.apps.tv.launcherx` on Google TV).
+  - **Optional fallback without ADB:** Settings → System → turn on "Home button opens Frost-flix", choose "Home button mode" ("Catch Home key" or "Watch launcher"), and switch on the Frost-flix accessibility service in the Android TV accessibility settings. Android turns that service off after every update of a sideloaded app, so turn it on again after updating; when it is off while "Home button opens Frost-flix" is on, the home screen shows "Home button is off." with a "Turn it back on" button.
 - **Weather:** Settings → Clock & glass → Weather → Off.
 - **Continue Watching:** Settings → Continue Watching → Sign in to Trakt. Open the address shown on your phone and type the code. The list comes from what NuvioTV scrobbles to Trakt, so turn on Trakt in NuvioTV too.
 - **Watchlist row:** with Trakt signed in, your Trakt watchlist appears as one row under the apps (go down into the dock). Switch it off under Settings → Continue Watching → Watchlist row.

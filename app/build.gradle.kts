@@ -11,8 +11,8 @@ android {
         applicationId = "tv.darren.glassio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 45
-        versionName = "1.9.3-d21"
+        versionCode = 46
+        versionName = "1.9.3-d22"
         // Trakt client ID: from the environment (GitHub Actions secret TRAKT_CLIENT_ID), never from the repo.
         // Empty in a local build without it; the app then shows "Trakt not configured".
         // Only leading/trailing whitespace and newlines are removed; every other character is kept (Trakt IDs can contain - and _).

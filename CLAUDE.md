@@ -44,7 +44,7 @@ Frost-flix is a hardened fork of the Android TV launcher Glassio v1.9.3 (GPL-3.0
 - Backup never exports the Trakt sign-in or the TMDB token. A new setting is only backed up if it is added to the allowlist in `data/Backup.kt`.
 
 ## Gotchas
-- Not a home app: MainActivity has no `HOME` intent filter (removed in d17 on purpose). `HomeKeyService` (accessibility) opens it on Home. Android turns that service off after every sideloaded update.
+- Home app and optional accessibility fallback: since d19 `MainActivity` has the `HOME` intent filter again and can hold the system `HOME` role (`adb shell cmd role add-role-holder android.app.role.HOME tv.darren.glassio`; switch back to another launcher with the same command and that launcher's package, e.g. `com.google.android.tvlauncher`). `HomeKeyService` (accessibility, with "Catch Home key" and "Watch launcher" modes) is now an optional fallback; Android turns that service off after every sideloaded update.
 - Background memory and network: images are software bitmaps (`allowHardware(false)`). Images are released when the app goes to the background, and refreshes are cancelled and run again in front (`Foreground.kt` `runInFront`). Background work must not hold bitmaps or open connections. Earlier attempts (d15 hardware bitmaps, d16 disposing the composition) were reverted.
 - Trakt uses OkHttp with an authenticator. Don't cancel calls already running in the background, so a token refresh is never cut off halfway.
 - Most recent changes have only been compiled, not run on a TV. Don't call behaviour verified unless a device test is recorded.

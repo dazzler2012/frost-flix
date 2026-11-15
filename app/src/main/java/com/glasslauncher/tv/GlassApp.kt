@@ -149,7 +149,14 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
     @Volatile var dpadAt = 0L
     fun browsing() = System.currentTimeMillis() - navAt < 1200
 
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** True when the app hit repeated startup crashes (3 within 2 minutes) and started with only the dock and Settings. */
+    @Volatile var safeMode = false
+        private set
+
+    private val scopeErrorHandler = kotlinx.coroutines.CoroutineExceptionHandler { _, e ->
+        android.util.Log.e("FrostApp", "Unhandled coroutine exception: ${e.javaClass.simpleName}: ${e.message}", e)
+    }
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + scopeErrorHandler)
     lateinit var settings: Settings; private set
     lateinit var http: Http; private set
     lateinit var icons: IconStore; private set
@@ -174,10 +181,30 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()
-        // A launcher must never vanish silently: keep the last crash for Settings → About.
+        val startAt = System.currentTimeMillis()
+        val crashSp = getSharedPreferences("glass_crash_guard", MODE_PRIVATE)
+        val recentCrashes = crashSp.getString("startup_crashes", "").orEmpty()
+            .split(',').mapNotNull { it.trim().toLongOrNull() }
+            .filter { startAt - it in 0L..120_000L }
+        if (recentCrashes.size >= 3) {
+            safeMode = true
+            // Clear the counter so the next normal start exits safe mode automatically.
+            crashSp.edit().remove("startup_crashes").apply()
+            android.util.Log.w("FrostApp", "Starting in safe mode after ${recentCrashes.size} startup crashes within 2 minutes")
+        } else if (recentCrashes.isNotEmpty()) {
+            crashSp.edit().putString("startup_crashes", recentCrashes.joinToString(",")).apply()
+        }
+        // A launcher must never vanish silently: keep the last crash for Settings → About, and count startup crashes.
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             runCatching {
+                val now = System.currentTimeMillis()
+                if (now - startAt <= 120_000L) {
+                    val prev = crashSp.getString("startup_crashes", "").orEmpty()
+                        .split(',').mapNotNull { it.trim().toLongOrNull() }
+                        .filter { now - it in 0L..120_000L }
+                    crashSp.edit().putString("startup_crashes", (prev + now).takeLast(5).joinToString(",")).commit()
+                }
                 java.io.File(filesDir, "last-crash.txt").writeText(
                     java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date()) + "\n" + e.stackTraceToString().take(4000))
             }
@@ -211,6 +238,7 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         })
         settings = Settings(this)
         HomeKeyService.setIntercept(settings.interceptHome)
+        HomeKeyService.setMode(settings.homeMode)
         checkHomeService()
         // Hides the banner as soon as the service is switched on (or shows it when it goes off) while we run.
         runCatching {
@@ -222,13 +250,29 @@ class GlassApp : Application(), coil3.SingletonImageLoader.Factory {
         icons = IconStore(this)
         packs = IconPacks(this)
         apps = AppRepository(this, settings, packs, icons).also { it.start() }
-        catalogs = CatalogRepository(this, settings, http).also { it.start(scope, foreground) }
-        weather = com.glasslauncher.tv.data.Weather(settings, http, scope, foreground).also { it.start() }
+        catalogs = CatalogRepository(this, settings, http).also { if (!safeMode) it.start(scope, foreground) }
+        weather = com.glasslauncher.tv.data.Weather(settings, http, scope, foreground).also { if (!safeMode) it.start() }
         trakt = com.glasslauncher.tv.data.Trakt(this, scope, foreground)
-        cw = com.glasslauncher.tv.data.ContinueWatching(this, settings, http, trakt, catalogs, scope, foreground).also { it.start() }
+        cw = com.glasslauncher.tv.data.ContinueWatching(this, settings, http, trakt, catalogs, scope, foreground).also { if (!safeMode) it.start() }
         topShelf = com.glasslauncher.tv.data.TopShelf(this, settings, apps, icons, cw, catalogs)
         backup = com.glasslauncher.tv.data.Backup(this, settings, catalogs, icons)
         topShelf.watchlist = { if (settings.watchlistRow && trakt.signedIn) cw.watchItems.value else emptyList() }
+        // When the network comes back while Frost-flix is in front, retry failed catalog, TMDB, weather and Trakt fetches.
+        runCatching {
+            getSystemService(android.net.ConnectivityManager::class.java)
+                ?.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: android.net.Network) {
+                        if (safeMode) return
+                        cw.resetBackoff()
+                        if (!_foreground.value) return
+                        scope.launch(Dispatchers.IO) {
+                            launch { runCatching { catalogs.retryFailed() } }
+                            launch { runCatching { weather.retryIfFailed() } }
+                            launch { runCatching { cw.retryIfFailed() } }
+                        }
+                    }
+                })
+        }
         // Icon files from the drop folder are decoded off the main thread.
         scope.launch(Dispatchers.IO) { runCatching { icons.importDropFolder(apps.apps.value.map { it.pkg }) } }
     }

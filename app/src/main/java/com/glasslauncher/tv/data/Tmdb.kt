@@ -22,27 +22,23 @@ class Tmdb(private val http: Http) {
         val tmdbLang = if (lang == "ar") "ar-SA" else "en-US"
         val imdb = item.id.takeIf { it.matches(Regex("tt\\d{7,10}")) }
         var tmdbId = 0
-        runCatching {
-            if (imdb != null) {
-                val r = get("https://api.themoviedb.org/3/find/$imdb?external_source=imdb_id", token)
-                tmdbId = r.optJSONArray(if (isTv) "tv_results" else "movie_results")?.optJSONObject(0)?.optInt("id", 0) ?: 0
-            }
-            if (tmdbId == 0) {
-                val q = URLEncoder.encode(item.name, "UTF-8")
-                val y = if (item.year.isNotBlank()) (if (isTv) "&first_air_date_year=${item.year}" else "&year=${item.year}") else ""
-                val r = get("https://api.themoviedb.org/3/search/$kind?query=$q$y&include_adult=false", token)
-                val results = r.optJSONArray("results")
-                if (results != null) for (i in 0 until results.length()) {
-                    val c = results.optJSONObject(i) ?: continue
-                    val titles = listOf("name", "title", "original_name", "original_title").map { norm(c.optString(it)) }
-                    if (norm(item.name) in titles) { tmdbId = c.optInt("id", 0); break }
-                }
+        if (imdb != null) {
+            val r = get("https://api.themoviedb.org/3/find/$imdb?external_source=imdb_id", token)
+            tmdbId = r.optJSONArray(if (isTv) "tv_results" else "movie_results")?.optJSONObject(0)?.optInt("id", 0) ?: 0
+        }
+        if (tmdbId == 0) {
+            val q = URLEncoder.encode(item.name, "UTF-8")
+            val y = if (item.year.isNotBlank()) (if (isTv) "&first_air_date_year=${item.year}" else "&year=${item.year}") else ""
+            val r = get("https://api.themoviedb.org/3/search/$kind?query=$q$y&include_adult=false", token)
+            val results = r.optJSONArray("results")
+            if (results != null) for (i in 0 until results.length()) {
+                val c = results.optJSONObject(i) ?: continue
+                val titles = listOf("name", "title", "original_name", "original_title").map { norm(c.optString(it)) }
+                if (norm(item.name) in titles) { tmdbId = c.optInt("id", 0); break }
             }
         }
         if (tmdbId == 0) return null
-        val d = runCatching {
-            get("https://api.themoviedb.org/3/$kind/$tmdbId?language=$tmdbLang&append_to_response=images&include_image_language=en,null", token)
-        }.getOrNull() ?: return null
+        val d = get("https://api.themoviedb.org/3/$kind/$tmdbId?language=$tmdbLang&append_to_response=images&include_image_language=en,null", token)
 
         var overview = d.optString("overview").trim()
         if (overview.isBlank() && lang != "en") {

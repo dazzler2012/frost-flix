@@ -6,7 +6,7 @@ Base: upstream tag `v1.9.3` (commit `8409fcf`, versionCode 25).
 
 - `applicationId` changed from `com.glasslauncher.tv` to `tv.darren.glassio`. The Kotlin package and `namespace` stay `com.glasslauncher.tv`.
 - App label changed from "Glassio" to "Frost-flix" (it was "Glassio (D)" up to 1.9.3-d3).
-- `versionName` changed to `1.9.3-d21`. `versionCode` is 45 (upstream 25).
+- `versionName` changed to `1.9.3-d22`. `versionCode` is 46 (upstream 25).
 - Release builds are no longer signed with the debug key. They are signed only when CI provides the keystore from secrets. Otherwise they are unsigned.
 
 ## Removed: adb client, key storage and everything that used it
@@ -376,3 +376,13 @@ Goal: let double-press Home (recent apps) work on the NVIDIA Shield while Home s
 - **Return to Home:** removed the purple/blue fallback gradient in `Backdrop` and the flat grey fallback in `LiquidSurface`. While the first backdrop after start/return is loading, the screen and glass stay black, then fade the backdrop and glass in together over 250 ms (`mix` `0f` → `1f`). No bitmaps are kept in the background.
 - **CI:** `tools/trakt_ci_check.sh` no longer prints the first or last 4 characters of `TRAKT_CLIENT_ID` (only `set (length N)` or `missing`). `.github/workflows/build.yml` pins `actions/upload-artifact` to commit SHA `ea165f8d65b6e75b540449e92b4886f43607fa02` (`# v4.6.2`).
 - **Not verified on the TV:** carousel responsiveness when holding D-pad, memory usage in the foreground, and the 250 ms fade-in from black on return to Home. Not compiled or run on a device in this session.
+
+## Crash guard, network recovery, settings cleanup and HOME role docs (1.9.3-d22)
+
+- **Docs and System settings text:** updated `CLAUDE.md`, `HANDOFF.md`, `USER-GUIDE.md`, `SETUP.md`, `SettingsScreen` (System category) and `MainActivity` comments to reflect that since 1.9.3-d19 Frost-flix can hold the system `HOME` role (`adb shell cmd role add-role-holder android.app.role.HOME tv.darren.glassio`; switch back to another launcher with the same command and that launcher's package), and that the accessibility service (`HomeKeyService`, with "Catch Home key" and "Watch launcher" modes) is an optional fallback. Also calls `HomeKeyService.setMode(settings.homeMode)` in `GlassApp.onCreate()`.
+- **Crash guard and startup safe mode:** `GlassApp.scope` now includes a `CoroutineExceptionHandler` that logs uncaught coroutine exceptions (`lastCrash`) and keeps the app alive. Uncaught process crashes within 2 minutes of startup are counted in `glass_crash_guard` preferences; if 3 occur within 2 minutes, the next launch starts in safe mode (`GlassApp.safeMode`), skipping catalog/weather/Trakt background loops and showing only the app dock, a short safe-mode note, and a Settings button until the next normal start.
+- **Network recovery:** `GlassApp.onCreate()` registers `ConnectivityManager.registerDefaultNetworkCallback` (`ACCESS_NETWORK_STATE` is already in the manifest). When the network becomes available while Frost-flix is in the foreground, failed catalog/TMDB (`CatalogRepository.retryFailed()`, `Tmdb.enrich()`), weather (`Weather.retryIfFailed()`) and Trakt (`ContinueWatching.resetBackoff()` + `retryIfFailed()`, `Trakt.retryUsernameIfMissing()`) fetches are retried. No new permissions or hosts.
+- **Removed unused code and fixed comments:** removed `ImageCaches.peekGlass`, `ImageCaches.describe`, `IconPacks.label`, `CatalogRepository.resolve`, and `Art.light` / `AppRepository.isLight`. Updated `HomeScreen.kt` comments that still referred to hardware bitmaps.
+- **Settings duplicate rows removed:** removed duplicate rows from `SettingsScreen.kt`, keeping one of each in its primary category: `Backdrop gallery` and `Transition speed` (50 ms step) in **Carousel**, `Glass refraction` in **Clock & glass**, and `TMDB token` in **Catalogs**. `Backup` import is unchanged and continues to accept existing backup files.
+- **Trakt 401 message:** `Trakt.fetch()` now reports `"sign-in expired"` (`SIGN_IN_AGAIN`) only when the token vault was actually cleared (`vault.load() == null`); if a transient refresh error left tokens intact, it reports `"request failed (HTTP 401)"`.
+- **Not verified on the TV:** startup safe mode after 3 crashes, network recovery callback on reconnect, and the updated Settings layout. Not compiled or run on a device in this session.

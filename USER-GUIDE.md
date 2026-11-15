@@ -92,28 +92,54 @@ Frost-flix never updates itself. About shows **No self-updates**.
 
 ## 4. Make it your Home screen
 
-On Android TV and Google TV there is no usable "default home app" choice, so the Home button is handled by an accessibility service.
+Android TV and Google TV hide the normal "default home app" picker, so there are two ways to make the Home button open Frost-flix:
 
-### Turn it on
+1. **System HOME role (via ADB, recommended if you use ADB):** makes Frost-flix the real system Home app. It survives sideloaded updates and keeps double-press Home (recent apps) working natively.
+2. **Accessibility service (optional fallback, on the TV only):** needs no computer or ADB, and has two modes (**Catch Home key** and **Watch launcher**).
+
+### Option A: System HOME role (ADB)
+
+With ADB connected to your TV, run:
+
+```sh
+adb shell cmd role add-role-holder android.app.role.HOME tv.darren.glassio
+```
+
+When Frost-flix holds the system `HOME` role, you can leave **Home button opens Frost-flix** (under Settings → **System**) off.
+
+### Option B: Accessibility service (optional fallback)
 
 1. Open Frost-flix and go up to the settings button.
 2. Open **System**.
 3. Turn on **Home button opens Frost-flix**.
-4. Choose **Turn on the accessibility service**.
-5. In Android's accessibility settings, choose **Frost-flix** and switch it on. (On a Shield: **Settings → Device Preferences → Accessibility → Frost-flix**.)
-6. Press Home. Frost-flix should appear.
+4. Choose **Home button mode**:
+   - **Catch Home key** (default): catches short Home presses directly so the TV's own launcher never flashes.
+   - **Watch launcher**: lets Android handle the Home key so double-press Home (recent apps on the Shield) keeps working, and brings Frost-flix to the front whenever the stock launcher appears.
+5. Choose **Turn on the accessibility service**.
+6. In Android's accessibility settings, choose **Frost-flix** and switch it on. (On a Shield: **Settings → Device Preferences → Accessibility → Frost-flix**.)
+7. Press Home. Frost-flix should appear.
 
 What the service does:
 
-- It only looks at the Home key while **Home button opens Frost-flix** is on. All other keys pass straight through.
+- In **Catch Home key** mode it only looks at the Home key while **Home button opens Frost-flix** is on; all other keys (and long-press Home) pass straight through.
+- In **Watch launcher** mode it never filters keys at all; it only watches for the stock launcher window.
 - Pressing Home while Frost-flix is already showing takes you back to the first slide.
 
 ### Switch back to another launcher
 
-- **Back to the stock home screen:** turn off **Home button opens Frost-flix** under **System**. You can also switch the Frost-flix accessibility service off.
-- **Another launcher such as Projectivy:**
-  1. Turn off **Home button opens Frost-flix** first, so the two apps don't fight over the Home button.
-  2. Then turn on that launcher's own Home-button override. Projectivy has one. *(Unverified: its exact name and place in Projectivy's settings.)*
+- **If you set the system HOME role via ADB:** run the same role command with the other launcher's package name:
+  - Stock Android TV / Shield launcher:
+    ```sh
+    adb shell cmd role add-role-holder android.app.role.HOME com.google.android.tvlauncher
+    ```
+  - Google TV launcher:
+    ```sh
+    adb shell cmd role add-role-holder android.app.role.HOME com.google.android.apps.tv.launcherx
+    ```
+  - Another third-party launcher (for example Projectivy): pass its package name to `adb shell cmd role add-role-holder android.app.role.HOME <package>`.
+- **If you used the accessibility service:**
+  - **Back to the stock home screen:** turn off **Home button opens Frost-flix** under **System** (and optionally switch the Frost-flix accessibility service off).
+  - **Another launcher such as Projectivy:** turn off **Home button opens Frost-flix** first so the two apps don't fight over the Home button, then turn on that launcher's own Home-button override. *(Unverified: its exact name and place in Projectivy's settings.)*
 
 ---
 
@@ -136,23 +162,21 @@ How the controls work:
   - **Performance** is smoothest.
   - **Balanced** gives sharp pictures with smooth navigation.
   - **Quality** is sharpest.
-  - Changing any row below switches Mode to **Custom**.
+  - Changing any performance-related setting switches Mode to **Custom**.
   - *Suggested for a Shield:* **Auto**. It picks **Balanced** on a Shield TV Pro (3 GB) and **Performance** on the 2 GB Shield TV.
-- **Glass detail:** sharper glass uses more memory. Standard (480 px) is fine.
 - **Picture quality:** **High (1280 px)** or **Maximum (original)**.
 - **Prepare ahead:** how many slides are loaded before you reach them.
-- **Slide transition:** fade length in milliseconds.
-- **Glass refraction:** only shown on Android 13 and newer. 0 means flat glass.
-- **Backdrop gallery:** several pictures per title. Needs the TMDB token.
 
 ### Carousel
 
 - **Auto-play** and **Slide time** set whether, and how often, slides change on their own.
+- **Transition speed:** fade length between slides in milliseconds.
 - **Title style:** Logo, Text or Hidden.
 - **Size rows:** **Logo / title size**, **Rating, year, platform size**, **Genres size**, **Synopsis size** and **Synopsis lines** change how big the text is.
 - **What is shown:** **Rating, year, platform**, **Genres line**, **Synopsis**, and **Synopsis only when the carousel is selected**.
 - **Dots style:** Dots, Progress bar or Hidden.
 - **Titles per catalog** and **Total titles** set how many titles load. 0 means every title, in an endless loop.
+- **Backdrop gallery** and **Pictures per title:** several pictures per title (needs the TMDB token).
 - **Shuffle all catalogs:** a new random mix each time the list loads.
 - **Synopsis language:** English or Arabic. Needs the TMDB token.
 - **Artwork:** which picture each title uses.
@@ -235,7 +259,6 @@ This page fills the carousel.
 - **Open titles in:** **Automatic** (default), **NuvioTV**, **Nuvio Legacy** or **Nuvio Re-Shaped**.
   - **Automatic** tries NuvioTV first (GitHub build, then Google Play build), then Nuvio Legacy, then Nuvio Re-Shaped.
   - *Suggested:* **Automatic**.
-- **TMDB token:** the same setting as on **Catalogs**.
 
 ### Screensaver
 
@@ -252,7 +275,7 @@ This page fills the carousel.
 
 ### System
 
-- **Home button opens Frost-flix** and **Turn on the accessibility service:** see [Make it your Home screen](#4-make-it-your-home-screen).
+- **Home button opens Frost-flix**, **Home button mode** (**Catch Home key** or **Watch launcher**) and **Turn on the accessibility service:** see [Make it your Home screen](#4-make-it-your-home-screen).
 
 ### Backup
 

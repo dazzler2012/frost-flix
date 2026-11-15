@@ -277,6 +277,11 @@ class Trakt(ctx: Context, private val scope: CoroutineScope, private val foregro
         if (name.isNotBlank()) { vault.username = name; username.value = name }
     }
 
+    /** Retries loading the Trakt username when the network comes back while signed in. */
+    fun retryUsernameIfMissing() {
+        if (signedIn && username.value.isBlank()) loadUsername()
+    }
+
     /**
      * Trakt's complete activation URL (code already in it) if the reply has one, else null.
      * Only accepted when it is https on the same host as verification_url and contains the code.
@@ -454,7 +459,10 @@ class Trakt(ctx: Context, private val scope: CoroutineScope, private val foregro
         } catch (e: Exception) {
             throw TraktError("can't reach api.trakt.tv (${e.javaClass.simpleName})")
         }
-        if (r.code == 401) throw TraktError(SIGN_IN_AGAIN)
+        if (r.code == 401) {
+            val cleared = synchronized(authLock) { vault.load() == null }
+            throw TraktError(if (cleared) SIGN_IN_AGAIN else "request failed (${describe(r)})")
+        }
         if (r.code !in 200..299) throw TraktError(describe(r))
         r.body
     }

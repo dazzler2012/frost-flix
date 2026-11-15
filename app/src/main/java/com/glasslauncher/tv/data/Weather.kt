@@ -49,6 +49,7 @@ data class WeatherNow(val city: String, val tempC: Double, val code: Int, val da
 class Weather(private val settings: Settings, private val http: Http, private val scope: CoroutineScope, private val foreground: StateFlow<Boolean>) {
     val now = MutableStateFlow<WeatherNow?>(null)
     private var place: Triple<String, Double, Double>? = null
+    @Volatile private var lastFailed = false
 
     fun start() {
         scope.launch(Dispatchers.IO) {
@@ -69,34 +70,47 @@ class Weather(private val settings: Settings, private val http: Http, private va
      * as one word ("dhiqar"), the same word split in two ("dhi qar").
      */
     private fun locate(city: String): Pair<Double, Double>? {
+        var anyResponse = false
+        var lastErr: Exception? = null
         fun meteo(q: String) = runCatching {
-            http.json("https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + URLEncoder.encode(q, "UTF-8"), month)
-                .optJSONArray("results")?.optJSONObject(0)?.let { r ->
-                    found.value = listOfNotNull(r.optString("name"), r.optString("country").takeIf { it.isNotBlank() }).joinToString(", ")
-                    r.getDouble("latitude") to r.getDouble("longitude")
-                }
-        }.getOrNull()
+            val res = http.json("https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + URLEncoder.encode(q, "UTF-8"), month)
+            anyResponse = true
+            res.optJSONArray("results")?.optJSONObject(0)?.let { r ->
+                found.value = listOfNotNull(r.optString("name"), r.optString("country").takeIf { it.isNotBlank() }).joinToString(", ")
+                r.getDouble("latitude") to r.getDouble("longitude")
+            }
+        }.onFailure { if (it is Exception) lastErr = it }.getOrNull()
         fun osm(q: String) = runCatching {
-            http.jsonArray("https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + URLEncoder.encode(q, "UTF-8"), month)
-                .optJSONObject(0)?.let { r ->
-                    found.value = r.optString("display_name").split(",").let { (it.firstOrNull().orEmpty() + ", " + it.lastOrNull().orEmpty().trim()) }
-                    r.getString("lat").toDouble() to r.getString("lon").toDouble()
-                }
-        }.getOrNull()
+            val res = http.jsonArray("https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + URLEncoder.encode(q, "UTF-8"), month)
+            anyResponse = true
+            res.optJSONObject(0)?.let { r ->
+                found.value = r.optString("display_name").split(",").let { (it.firstOrNull().orEmpty() + ", " + it.lastOrNull().orEmpty().trim()) }
+                r.getString("lat").toDouble() to r.getString("lon").toDouble()
+            }
+        }.onFailure { if (it is Exception) lastErr = it }.getOrNull()
         meteo(city)?.let { return it }
         osm(city)?.let { return it }
         val w = city.trim()
         if (' ' !in w && w.length in 5..12) for (i in 2..w.length - 2) meteo(w.substring(0, i) + " " + w.substring(i))?.let { return it }
+        if (!anyResponse) lastErr?.let { throw it }
         return null
     }
 
     /** Called when the city changes in Settings. */
     fun reload() { place = null; scope.launch(Dispatchers.IO) { runCatching { refresh() } } }
 
+    /** Retries a failed weather lookup when the network comes back while Frost-flix is in front. */
+    fun retryIfFailed() {
+        if (settings.weatherMode != "off" && settings.weatherCity.isNotBlank() && (lastFailed || now.value == null)) {
+            scope.launch(Dispatchers.IO) { runCatching { refresh() } }
+        }
+    }
+
     private fun refresh() {
         val city = settings.weatherCity
         // No city chosen yet: nothing to look up, nothing to show.
-        if (city.isBlank()) { place = null; found.value = ""; now.value = null; return }
+        if (city.isBlank()) { place = null; found.value = ""; now.value = null; lastFailed = false; return }
+        lastFailed = true
         val p = place?.takeIf { it.first == city } ?: run {
             val ll = locate(city) ?: run { found.value = "City not found"; return }
             Triple(city, ll.first, ll.second).also { place = it }
@@ -106,5 +120,6 @@ class Weather(private val settings: Settings, private val http: Http, private va
             10 * 60_000L,
         ).optJSONObject("current") ?: return
         now.value = WeatherNow(found.value.substringBefore(",").ifBlank { city }, c.optDouble("temperature_2m"), c.optInt("weather_code"), c.optInt("is_day", 1) == 1)
+        lastFailed = false
     }
 }

@@ -60,6 +60,8 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
     val status = MutableStateFlow("")
     private val enriched = MutableStateFlow<Map<String, HeroItem>>(emptyMap())
     val enrichedItems: StateFlow<Map<String, HeroItem>> = enriched
+    @Volatile private var lastFailed = false
+    private val failedTmdb = java.util.concurrent.ConcurrentHashMap<String, HeroItem>()
 
     val addons: Set<String> get() = sp.getStringSet("addons", emptySet()) ?: emptySet()
     private val manual: Set<String> get() = sp.getStringSet("manual_addons", emptySet()) ?: emptySet()
@@ -121,6 +123,7 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
         withContext(Dispatchers.IO) {
             status.value = "Loading catalogs…"
             loadedWith = inputs()
+            var failed = false
             val urls = addons.toList()
             val refs = java.util.Collections.synchronizedList(mutableListOf<CatalogRef>())
             val gate = Semaphore(4)
@@ -131,7 +134,10 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
                             runCatching {
                                 val m = http.json(u, 24L * 3600 * 1000)
                                 refs += parseCatalogs(u, java.net.URI(u).host ?: "Add-on", m)
-                            }.onFailure { android.util.Log.w("FrostCatalogs", "manifest failed for ${java.net.URI(u).host}: ${it.javaClass.simpleName}") }
+                            }.onFailure {
+                                failed = true
+                                android.util.Log.w("FrostCatalogs", "manifest failed for ${java.net.URI(u).host}: ${it.javaClass.simpleName}")
+                            }
                         }
                     }
                 }.awaitAll()
@@ -146,6 +152,7 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
             val chosen = all.filter { it.key in sel }
             if (chosen.isEmpty()) {
                 items.value = emptyList()
+                lastFailed = failed
                 status.value = if (urls.isEmpty()) "No add-ons yet" else "No catalogs selected"
                 return@withContext
             }
@@ -170,7 +177,9 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
                 chosen.map { c ->
                     async {
                         gate.withPermit {
-                            results[c.key] = runCatching { fetchCatalog(c, per) }.getOrDefault(emptyList())
+                            results[c.key] = runCatching { fetchCatalog(c, per) }
+                                .onFailure { failed = true }
+                                .getOrDefault(emptyList())
                             // Show the first results early instead of waiting for every catalog.
                             if (results.size <= 3 || results.size % 8 == 0) items.value = merge(false)
                             status.value = "Loading ${results.size}/${chosen.size} catalogs…"
@@ -180,6 +189,7 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
             }
             val merged = merge(settings.shuffle)
             items.value = merged
+            lastFailed = failed || merged.isEmpty()
             status.value = "${merged.size} titles from ${chosen.size} catalogs"
         }
     }
@@ -234,8 +244,6 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
         )
     }
 
-    fun resolve(item: HeroItem): HeroItem = enriched.value[item.key] ?: item
-
     /** Fetches TMDB details for [item] in the background; no-op without a token. */
     suspend fun enrich(item: HeroItem) {
         val token = settings.tmdbToken
@@ -243,13 +251,29 @@ class CatalogRepository(private val ctx: Context, private val settings: Settings
         withContext(Dispatchers.IO) {
             tmdbLock.withLock {
                 if (enriched.value.containsKey(item.key)) return@withLock
-                val r = runCatching { tmdb.enrich(item, token, settings.descLang) }.getOrNull()
-                enriched.value = enriched.value + (item.key to (r ?: item))
+                runCatching { tmdb.enrich(item, token, settings.descLang) }
+                    .onSuccess { r ->
+                        failedTmdb.remove(item.key)
+                        enriched.value = enriched.value + (item.key to (r ?: item))
+                    }
+                    .onFailure {
+                        failedTmdb[item.key] = item
+                    }
             }
         }
     }
 
-    fun clearEnrichment() { enriched.value = emptyMap() }
+    fun clearEnrichment() {
+        failedTmdb.clear()
+        enriched.value = emptyMap()
+    }
+
+    /** Retries failed catalog and TMDB lookups when the network comes back while Frost-flix is in front. */
+    suspend fun retryFailed() {
+        if (lastFailed || (addons.isNotEmpty() && items.value.isEmpty())) refresh()
+        val pending = failedTmdb.values.toList()
+        for (item in pending) enrich(item)
+    }
 
     // ---- Management
     fun toggleCatalog(key: String) {

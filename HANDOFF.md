@@ -1,6 +1,13 @@
 # Handoff
 
-Last updated: 2 Nov 2026. `main` is at 1.9.3-d17 (versionCode 41).
+Last updated: 15 Nov 2026. `claude/reliability-docs` is at 1.9.3-d22 (versionCode 46).
+
+## Home role & accessibility fallback (since 1.9.3-d18 / d19)
+
+Since 1.9.3-d19 Frost-flix has the `HOME` intent filter again and can hold the system `HOME` role:
+- Make Frost-flix the system Home app: `adb shell cmd role add-role-holder android.app.role.HOME tv.darren.glassio`
+- Switch back to another launcher: run the same command with that launcher's package (for example `adb shell cmd role add-role-holder android.app.role.HOME com.google.android.tvlauncher`).
+- The accessibility service (`HomeKeyService`) is now an optional fallback when you don't use ADB, with two modes under Settings → System: **Catch Home key** (default) and **Watch launcher** (lets double-press Home for recent apps work on the Shield).
 
 ## Open: 1.9.3-d5 Trakt sign-in page, not checked on a TV
 

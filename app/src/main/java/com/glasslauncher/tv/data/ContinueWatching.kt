@@ -188,6 +188,17 @@ class ContinueWatching(
         lastFetch.value = 0L; sp.edit().putLong("fetchedAt", 0L).apply()
     }
 
+    /** Clears retry backoff when the network comes back. */
+    fun resetBackoff() {
+        nextTry = 0L
+    }
+
+    /** Retries a failed Trakt or username fetch when the network comes back while Frost-flix is in front. */
+    suspend fun retryIfFailed() {
+        trakt.retryUsernameIfMissing()
+        if (failures > 0 || lastError.value.isNotBlank()) fetch(force = true)
+    }
+
     // ---- Artwork: your add-ons' meta resource (not Cinemeta), then TMDB through CatalogRepository.enrich
 
     private class MetaAddon(val base: String, val types: Set<String>, val prefixes: List<String>)

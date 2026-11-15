@@ -38,8 +38,6 @@ class IconPacks(private val ctx: Context) {
         return out.values.sortedBy { it.label.lowercase() }
     }
 
-    fun label(pkg: String): String = installed().firstOrNull { it.pkg == pkg }?.label ?: pkg
-
     @Synchronized
     private fun ensure(pack: String): Loaded? {
         loaded?.takeIf { it.pkg == pack }?.let { return it }

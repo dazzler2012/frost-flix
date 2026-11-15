@@ -64,8 +64,6 @@ class ImageCaches {
         set(v) { val n = v.coerceIn(4, 16); if (n != field) { field = n; glass.resize(n) } }
     private val pending = HashMap<String, Deferred<GlassImages?>>()
 
-    fun peekGlass(url: String, blur: Int): GlassImages? = glass.get("$blur|$url")
-
     /**
      * Glass copies of [url], prepared ahead of time so a slide, its backdrop and the glass in front of it all
      * change in the same frame. The work runs in its own scope: a caller that goes away (you pressed Right
@@ -129,9 +127,6 @@ class ImageCaches {
     fun clear() {
         glass.evictAll()
     }
-
-    /** Summary of cached glass entries, for diagnostics. */
-    fun describe(): String = "glass ${glass.size()}"
 
     companion object {
         // One low-priority worker: blurring never competes with drawing the screen. Holds no bitmaps.
